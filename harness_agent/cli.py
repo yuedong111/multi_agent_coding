@@ -10,15 +10,13 @@ from .workflow import Workflow
 
 def add_build_args(command: argparse.ArgumentParser) -> None:
     command.add_argument("--root", required=True, help="Target project root")
-    command.add_argument("--goal-file", default="goal.md", help="Goal Markdown file, relative to --root by default")
     command.add_argument("--config", default="configs/agents.example.json", help="Agent config JSON")
     command.add_argument("--skills-dir", default="skills", help="Skills directory")
     command.add_argument("--agents-md", default="AGENTS.md", help="Global agent instructions Markdown")
 
 
-def read_goal(root: Path, goal_file: str) -> str:
-    path = Path(goal_file)
-    target = path if path.is_absolute() else root / path
+def read_goal(root: Path) -> str:
+    target = root / "goal.md"
     if not target.exists():
         raise FileNotFoundError(f"Goal file not found: {target}")
     goal = target.read_text(encoding="utf-8").strip()
@@ -61,16 +59,16 @@ def main(argv: list[str] | None = None) -> None:
     workflow = Workflow(root, config, skills_dir, global_prompt)
 
     if args.command == "run":
-        goal = read_goal(root, args.goal_file)
+        goal = read_goal(root)
         results = workflow.run(goal)
     elif args.command == "plan":
-        goal = read_goal(root, args.goal_file)
+        goal = read_goal(root)
         results = workflow.plan(goal)
     elif args.command == "prompts":
-        goal = read_goal(root, args.goal_file)
+        goal = read_goal(root)
         results = workflow.generate_prompts(goal)
     elif args.command == "execute":
-        goal = read_goal(root, args.goal_file)
+        goal = read_goal(root)
         results = workflow.execute(goal)
     elif args.command == "refine":
         files = [item.strip() for item in args.files.split(",") if item.strip()]

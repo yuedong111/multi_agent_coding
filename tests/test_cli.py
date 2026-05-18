@@ -11,7 +11,7 @@ class CliGoalFileTest(unittest.TestCase):
             root = Path(tmp)
             (root / "goal.md").write_text("Build a TODO API.\n", encoding="utf-8")
 
-            self.assertEqual(read_goal(root, "goal.md"), "Build a TODO API.")
+            self.assertEqual(read_goal(root), "Build a TODO API.")
 
     def test_read_goal_rejects_empty_file(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -19,7 +19,7 @@ class CliGoalFileTest(unittest.TestCase):
             (root / "goal.md").write_text("  \n", encoding="utf-8")
 
             with self.assertRaisesRegex(ValueError, "Goal file is empty"):
-                read_goal(root, "goal.md")
+                read_goal(root)
 
 
 if __name__ == "__main__":
