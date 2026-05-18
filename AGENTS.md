@@ -1,46 +1,46 @@
-# Harness Agent Team Instructions
+# Harness Agent 团队说明
 
-These rules apply to every agent in this harness.
+这些规则适用于本 harness 中的每一个 agent。
 
-## Operating Model
+## 运行模式
 
-- Work only inside the target project root.
-- Return exactly one JSON tool action per turn.
-- Inspect existing files before creating or replacing code.
-- Prefer the smallest change that satisfies the current task.
-- Keep task status and agent messages concise and factual.
-- Finish when your assigned role is complete; do not continue doing another agent's job unless it is necessary to unblock your role.
+- 只在目标项目根目录内工作。
+- 每轮只返回一个 JSON 工具操作。
+- 在创建或替换代码之前，先检查现有文件。
+- 优先采用能满足当前任务的最小改动。
+- 保持任务状态和 agent 消息简洁、客观。
+- 当你分配到的角色已完成时即结束；除非为了给自己的角色解除阻塞，否则不要继续执行其他 agent 的工作。
 
-## Skill Use
+## 技能使用
 
-- The prompt lists all available skills by name and description.
-- Default skills are already loaded for the current agent.
-- When a listed skill is relevant but not loaded, call `load_skill` before applying it.
-- Do not invent skill names or assume a skill's body from its description.
-- If a needed skill is unavailable, continue with the best local reasoning and mention the gap in your final summary.
+- 提示中会按名称和描述列出所有可用技能。
+- 默认技能已为当前 agent 加载。
+- 当列出的某项技能相关但尚未加载时，请先调用 `load_skill`，再应用该技能。
+- 不要编造技能名称，也不要仅凭描述推断技能正文。
+- 如果所需技能不可用，请继续使用最佳本地推理，并在最终总结中说明这一缺口。
 
-## File Boundaries
+## 文件边界
 
-- Do not edit files outside the target project root.
-- Do not rewrite unrelated files.
-- Do not delete user work unless the task explicitly requires it.
-- Do not perform broad formatting churn unless formatting is the requested task.
-- Do not change generated state directories such as `.git`, `.tasks`, `.team`, `.harness`, `.venv`, `__pycache__`, or dependency folders unless a harness tool owns that state.
-- In refine mode, stay within the requested file scope unless a dependency file must change to keep the project working.
+- 不要编辑目标项目根目录之外的文件。
+- 不要重写无关文件。
+- 除非任务明确要求，否则不要删除用户工作。
+- 除非格式化本身就是请求内容，否则不要进行大范围格式改动。
+- 不要更改生成的状态目录，例如 `.git`、`.tasks`、`.team`、`.harness`、`.venv`、`__pycache__` 或依赖目录，除非某个 harness 工具拥有该状态。
+- 在 refine 模式下，请保持在请求的文件范围内；除非必须修改依赖文件才能让项目继续正常工作。
 
-## Command Boundaries
+## 命令边界
 
-- Run commands only from the target project root.
-- Prefer read-only inspection commands before write or install commands.
-- Do not run destructive commands such as hard resets, recursive deletes, disk wipes, or force pushes.
-- Do not start long-running servers unless the task requires runtime verification.
-- Do not print secrets, tokens, private keys, or environment values.
-- Do not install new dependencies unless they are necessary and consistent with the existing project.
+- 只从目标项目根目录运行命令。
+- 在执行写入或安装命令之前，优先使用只读检查命令。
+- 不要运行破坏性命令，例如硬重置、递归删除、磁盘擦除或强制推送。
+- 除非任务需要运行时验证，否则不要启动长时间运行的服务器。
+- 不要打印密钥、令牌、私钥或环境变量值。
+- 除非新依赖是必要的并且与现有项目一致，否则不要安装新依赖。
 
-## Quality Bar
+## 质量标准
 
-- Keep implementation, tests, docs, and release notes aligned.
-- When changing behavior, add or update focused tests where practical.
-- Treat failing tests, lint failures, or missing verification as risks to report.
-- Code review agents should prioritize bugs, regressions, security issues, and missing tests over style preferences.
-- Release agents should document how to run, verify, and deploy the result without overstating certainty.
+- 保持实现、测试、文档和发布说明一致。
+- 更改行为时，在可行的情况下添加或更新聚焦的测试。
+- 将测试失败、lint 失败或缺少验证视为需要报告的风险。
+- 代码审查 agent 应优先关注 bug、回归、安全问题和缺失测试，而不是样式偏好。
+- 发布 agent 应说明如何运行、验证和部署结果，不要夸大确定性。
