@@ -16,6 +16,8 @@ class AgentConfig:
     temperature: float
     max_steps: int
     skills: list[str]
+    provider: str = "openai-compatible"
+    max_tokens: int | None = None
     enabled: bool = True
     max_parse_retries: int = 2
 
@@ -44,6 +46,10 @@ def load_config(path: Path) -> HarnessConfig:
             max_steps=int(merged.get("max_steps", 12)),
             max_parse_retries=int(merged.get("max_parse_retries", 2)),
             skills=list(merged.get("skills", [])),
+            provider=str(merged.get("provider", "openai-compatible")).lower(),
+            max_tokens=(
+                int(merged["max_tokens"]) if merged.get("max_tokens") is not None else None
+            ),
             enabled=bool(merged.get("enabled", True)),
         )
 

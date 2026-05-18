@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from .config import AgentConfig
-from .llm import OpenAICompatibleClient
+from .llm import create_llm_client
 from .message_bus import MessageBus
 from .skills import SkillLoader
 from .task_manager import TaskManager
@@ -30,7 +30,7 @@ class Agent:
         self.bus = bus
         self.skills = skills
         self.runtime = runtime
-        self.client = OpenAICompatibleClient(config)
+        self.client = create_llm_client(config)
         self.global_prompt = global_prompt.strip()
         self.runtime_loaded_skills = set(config.skills)
 

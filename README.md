@@ -3,7 +3,7 @@
 一个最小可运行的多 agent 代码开发 harness。它把你总结里的 Task Graph、Agent Loop、Worktree/目录隔离、Skill Loading、MessageBus、局部微调合在一起，目标是：
 
 - 按“需求计划审核 -> agent prompt 审核 -> 执行实现”的三阶段流程，让多 agent 自动生成结构、写代码、测试、产出上线说明。
-- 每个 agent 可单独配置模型、`api_key_env` 和 `base_url`。
+- 每个 agent 可单独配置模型、`provider`、`api_key_env` 和 `base_url`。
 - 通过 `skills/` 目录复用 Codex/Claude Code 风格工作流约束。
 - 后续可以用 refine 命令做局部微调，而不是整项目重来。
 
@@ -96,9 +96,11 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 配置文件是 JSON，避免额外依赖。每个 agent 支持：
 
 - `model`：模型名。
-- `base_url`：OpenAI-compatible endpoint，例如 `https://api.openai.com/v1`。
+- `provider`：模型供应商适配器，默认 `openai-compatible`，也支持 `anthropic`。
+- `base_url`：供应商 API endpoint，例如 `https://api.openai.com/v1` 或 `https://api.anthropic.com/v1`。
 - `api_key_env`：从哪个环境变量读取 key。
 - `temperature`：温度。
+- `max_tokens`：可选，限制模型最多生成的 token 数；Anthropic 原生接口未配置时默认使用 `4096`。
 - `max_parse_retries`：模型输出不是合法 JSON 工具调用时，最多让模型重试几次。
 - `enabled`：是否启用。
 
@@ -120,6 +122,7 @@ Copy-Item configs\agents.example.json agents.local.json
 ```json
 {
   "defaults": {
+    "provider": "openai-compatible",
     "base_url": "https://api.openai.com/v1",
     "api_key_env": "OPENAI_API_KEY",
     "model": "gpt-4.1-mini",
@@ -135,9 +138,11 @@ Copy-Item configs\agents.example.json agents.local.json
     },
     "coder": {
       "enabled": true,
-      "base_url": "https://your-openai-compatible-host.example/v1",
-      "api_key_env": "CODER_API_KEY",
-      "model": "your-coder-model",
+      "provider": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-sonnet-4-20250514",
+      "max_tokens": 4096,
       "role": "负责最小必要代码实现。"
     },
     "tester": {
@@ -152,18 +157,18 @@ Copy-Item configs\agents.example.json agents.local.json
 上面示例中：
 
 - `lead` 没有写 `base_url` 和 `api_key_env`，所以继承 `defaults`，使用 `OPENAI_API_KEY`。
-- `coder` 覆盖了 `base_url`、`api_key_env` 和 `model`，所以会向 `https://your-openai-compatible-host.example/v1/chat/completions` 发请求，并从 `CODER_API_KEY` 读取 key。
+- `coder` 覆盖了 `provider`、`base_url`、`api_key_env`、`model` 和 `max_tokens`，所以会向 `https://api.anthropic.com/v1/messages` 发请求，并从 `ANTHROPIC_API_KEY` 读取 key。
 - `tester` 只覆盖了 `model`，其他连接参数继续继承 `defaults`。
 
 需要为多个供应商配置 key 时，在运行命令前设置对应环境变量：
 
 ```powershell
 $env:OPENAI_API_KEY="openai-key"
-$env:CODER_API_KEY="coder-provider-key"
+$env:ANTHROPIC_API_KEY="anthropic-key"
 python -m harness_agent execute --root C:\path\to\project --config agents.local.json
 ```
 
-`base_url` 应填写到 API 版本前缀为止，不要包含 `/chat/completions`；runtime 会自动追加 `/chat/completions`。例如填写 `https://api.openai.com/v1`，最终请求地址是 `https://api.openai.com/v1/chat/completions`。
+`base_url` 应填写到 API 版本前缀为止，不要包含具体资源路径。`openai-compatible` 会自动追加 `/chat/completions`；`anthropic` 会自动追加 `/messages`。
 
 模型每轮输出必须是一个 JSON 工具调用。如果输出了不完整 JSON、缺少 `tool` 字段，或把 JSON 写坏了，runtime 会把解析错误发回给同一个 agent，要求它重新生成。默认最多重试 2 次；如果仍然失败，该 agent 本轮会以 `failed` 结束，不会把坏内容派发给工具执行。
 

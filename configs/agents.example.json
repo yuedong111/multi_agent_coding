@@ -1,5 +1,6 @@
 {
   "defaults": {
+    "provider": "openai-compatible",
     "base_url": "https://api.openai.com/v1",
     "api_key_env": "OPENAI_API_KEY",
     "model": "gpt-4.1-mini",
@@ -22,7 +23,11 @@
     },
     "coder": {
       "enabled": true,
-      "model": "gpt-4.1",
+      "provider": "anthropic",
+      "base_url": "https://api.anthropic.com/v1",
+      "api_key_env": "ANTHROPIC_API_KEY",
+      "model": "claude-sonnet-4-20250514",
+      "max_tokens": 4096,
       "role": "负责最小必要代码实现，严格按 docs/requirements.md、任务图和自己的动态执行 prompt 创建和修改文件。",
       "skills": ["vibe-coding", "codex-style"]
     },
