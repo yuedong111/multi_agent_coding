@@ -95,6 +95,68 @@ class WorkflowRequirementsGateTest(unittest.TestCase):
             self.assertEqual(prompt, "Manual prompt.\n")
             self.assertEqual(prompt_path.read_text(encoding="utf-8"), "Manual prompt.\n")
 
+    def test_plan_stage_generates_requirements_when_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            skills.mkdir()
+            workflow = Workflow(root, config(), skills, "")
+
+            result = workflow.plan("Build a TODO API.")
+
+            requirements = root / "docs" / "requirements.md"
+            self.assertTrue(requirements.exists())
+            self.assertEqual(result["plan"]["status"], "completed")
+            self.assertIn("Build a TODO API.", requirements.read_text(encoding="utf-8"))
+
+    def test_plan_stage_preserves_non_empty_requirements(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            (root / "docs").mkdir(parents=True)
+            skills.mkdir()
+            requirements = root / "docs" / "requirements.md"
+            requirements.write_text("Reviewed requirements.\n", encoding="utf-8")
+            workflow = Workflow(root, config(), skills, "")
+
+            result = workflow.plan("Build a TODO API.")
+
+            self.assertEqual(result["plan"]["status"], "skipped")
+            self.assertEqual(requirements.read_text(encoding="utf-8"), "Reviewed requirements.\n")
+
+    def test_prompts_stage_generates_execution_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            (root / "docs").mkdir(parents=True)
+            skills.mkdir()
+            (root / "docs" / "requirements.md").write_text("Reviewed requirements.\n", encoding="utf-8")
+            workflow = Workflow(root, config(), skills, "")
+
+            result = workflow.generate_prompts("Build a TODO API.")
+
+            self.assertIn("architect", result)
+            self.assertIn("coder", result)
+            self.assertNotIn("lead", result)
+            self.assertTrue((root / ".harness" / "agent-prompts" / "coder.md").exists())
+            self.assertEqual(workflow._missing_agent_prompts(["architect", "coder"]), [])
+
+    def test_execute_requires_reviewed_prompts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            (root / "docs").mkdir(parents=True)
+            skills.mkdir()
+            (root / "docs" / "requirements.md").write_text("Reviewed requirements.\n", encoding="utf-8")
+            workflow = Workflow(root, config(), skills, "")
+
+            with self.assertRaisesRegex(RuntimeError, "Run the prompts stage first"):
+                workflow.execute("Build a TODO API.")
+
 
 if __name__ == "__main__":
     unittest.main()

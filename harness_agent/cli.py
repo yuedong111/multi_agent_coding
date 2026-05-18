@@ -12,12 +12,33 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="harness-agent")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    run = sub.add_parser("run", help="Run the full multi-agent build workflow")
+    run = sub.add_parser("run", help="Run plan, prompts, and execute without review pauses")
     run.add_argument("--root", required=True, help="Target project root")
     run.add_argument("--goal", required=True, help="Project goal")
     run.add_argument("--config", default="configs/agents.example.json", help="Agent config JSON")
     run.add_argument("--skills-dir", default="skills", help="Skills directory")
     run.add_argument("--agents-md", default="AGENTS.md", help="Global agent instructions Markdown")
+
+    plan = sub.add_parser("plan", help="Generate docs/requirements.md for human review")
+    plan.add_argument("--root", required=True, help="Target project root")
+    plan.add_argument("--goal", required=True, help="Project goal")
+    plan.add_argument("--config", default="configs/agents.example.json", help="Agent config JSON")
+    plan.add_argument("--skills-dir", default="skills", help="Skills directory")
+    plan.add_argument("--agents-md", default="AGENTS.md", help="Global agent instructions Markdown")
+
+    prompts = sub.add_parser("prompts", help="Generate per-agent prompts for human review")
+    prompts.add_argument("--root", required=True, help="Target project root")
+    prompts.add_argument("--goal", required=True, help="Project goal")
+    prompts.add_argument("--config", default="configs/agents.example.json", help="Agent config JSON")
+    prompts.add_argument("--skills-dir", default="skills", help="Skills directory")
+    prompts.add_argument("--agents-md", default="AGENTS.md", help="Global agent instructions Markdown")
+
+    execute = sub.add_parser("execute", help="Run enabled agents using reviewed requirements and prompts")
+    execute.add_argument("--root", required=True, help="Target project root")
+    execute.add_argument("--goal", required=True, help="Project goal")
+    execute.add_argument("--config", default="configs/agents.example.json", help="Agent config JSON")
+    execute.add_argument("--skills-dir", default="skills", help="Skills directory")
+    execute.add_argument("--agents-md", default="AGENTS.md", help="Global agent instructions Markdown")
 
     refine = sub.add_parser("refine", help="Run a local refinement workflow")
     refine.add_argument("--root", required=True, help="Target project root")
@@ -37,6 +58,12 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.command == "run":
         results = workflow.run(args.goal)
+    elif args.command == "plan":
+        results = workflow.plan(args.goal)
+    elif args.command == "prompts":
+        results = workflow.generate_prompts(args.goal)
+    elif args.command == "execute":
+        results = workflow.execute(args.goal)
     elif args.command == "refine":
         files = [item.strip() for item in args.files.split(",") if item.strip()]
         results = workflow.refine(args.request, files=files)

@@ -14,6 +14,7 @@ from .tools import ToolRuntime
 
 
 DEFAULT_ORDER = ["lead", "architect", "coder", "tester", "reviewer", "coder", "tester", "release"]
+BUILD_EXECUTION_ORDER = DEFAULT_ORDER[1:]
 AGENT_PROMPTS_DIR = "agent-prompts"
 
 
@@ -32,13 +33,62 @@ class Workflow:
         self.global_prompt = global_prompt
 
     def run(self, goal: str) -> dict:
+        self.plan(goal)
+        self.generate_prompts(goal)
+        return self.execute(goal)
+
+    def plan(self, goal: str) -> dict:
         self._bootstrap_team()
         if self._requirements_has_content():
-            self._bootstrap_tasks(goal)
-            objective = self._objective(goal, mode="build", use_existing_requirements=True)
-            return self._run_order(objective, mode="build", order=DEFAULT_ORDER[1:])
-        objective = self._objective(goal, mode="build")
-        return self._run_order(objective, mode="build")
+            return {
+                "plan": {
+                    "status": "skipped",
+                    "summary": "docs/requirements.md already has content; preserved for review.",
+                    "requirementsPath": "docs/requirements.md",
+                }
+            }
+        self._write_requirements_plan(goal)
+        return {
+            "plan": {
+                "status": "completed",
+                "summary": "Generated docs/requirements.md for human review.",
+                "requirementsPath": "docs/requirements.md",
+            }
+        }
+
+    def generate_prompts(self, goal: str) -> dict:
+        self._bootstrap_team()
+        if not self._requirements_has_content():
+            raise RuntimeError("docs/requirements.md is empty or missing. Run the plan stage first.")
+        self._bootstrap_tasks(goal)
+        objective = self._objective(goal, mode="build", use_existing_requirements=True)
+        generated: dict[str, dict[str, str]] = {}
+        for name in self._unique_enabled_order(BUILD_EXECUTION_ORDER):
+            config = self.config.agents[name]
+            path = self._agent_prompt_path(name)
+            existed_with_content = path.exists() and bool(path.read_text(encoding="utf-8").strip())
+            self._ensure_agent_prompt(name, config.role, objective, "build")
+            generated[name] = {
+                "status": "skipped" if existed_with_content else "completed",
+                "promptPath": path.relative_to(self.root).as_posix(),
+                "summary": "Existing non-empty prompt preserved."
+                if existed_with_content
+                else "Generated dynamic execution prompt for review.",
+            }
+        self._write_summary({"prompts": generated})
+        return generated
+
+    def execute(self, goal: str) -> dict:
+        self._bootstrap_team()
+        if not self._requirements_has_content():
+            raise RuntimeError("docs/requirements.md is empty or missing. Run the plan stage first.")
+        self._bootstrap_tasks(goal)
+        missing = self._missing_agent_prompts(BUILD_EXECUTION_ORDER)
+        if missing:
+            names = ", ".join(missing)
+            raise RuntimeError(f"Missing dynamic prompts for: {names}. Run the prompts stage first.")
+        objective = self._objective(goal, mode="build", use_existing_requirements=True)
+        return self._run_order(objective, mode="build", order=BUILD_EXECUTION_ORDER, allow_prompt_generation=False)
 
     def refine(self, request: str, files: list[str] | None = None) -> dict:
         scope = f"\nAllowed files: {', '.join(files)}" if files else "\nAllowed files: infer minimal scope"
@@ -50,7 +100,13 @@ class Workflow:
         objective = self._objective(f"{request}{scope}", mode="refine", task_id=task.id)
         return self._run_order(objective, mode="refine", order=["lead", "coder", "tester", "reviewer", "release"])
 
-    def _run_order(self, objective: str, mode: str, order: list[str] | None = None) -> dict:
+    def _run_order(
+        self,
+        objective: str,
+        mode: str,
+        order: list[str] | None = None,
+        allow_prompt_generation: bool = True,
+    ) -> dict:
         order = order or DEFAULT_ORDER
         state = self._load_or_begin_state(mode, objective, order)
         results = state.get("results", {})
@@ -59,7 +115,11 @@ class Workflow:
             config = self.config.agents.get(name)
             if not config or not config.enabled:
                 continue
-            agent_prompt = self._ensure_agent_prompt(name, config.role, objective, mode)
+            agent_prompt = (
+                self._ensure_agent_prompt(name, config.role, objective, mode)
+                if allow_prompt_generation
+                else self._read_required_agent_prompt(name)
+            )
             checkpoint = self.state.make_checkpoint(state["runId"], name, index)
             isolated_root = self.state.prepare_isolation(state["runId"], name, index)
             journal_path = self.state.journal_path(state["runId"], name, index)
@@ -177,6 +237,30 @@ class Workflow:
         path = self.root / "docs" / "requirements.md"
         return path.exists() and bool(path.read_text(encoding="utf-8").strip())
 
+    def _write_requirements_plan(self, goal: str) -> None:
+        path = self.root / "docs" / "requirements.md"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.read_text(encoding="utf-8").strip():
+            return
+        content = f"""# Business Requirements
+
+## Goal
+
+{goal}
+
+## Review Notes
+
+- This file is the plan and business requirements source for the build.
+- Review and edit this document before running the prompt generation stage.
+- Add confirmed business rules, boundaries, permissions, state transitions, data consistency rules, and exception semantics here.
+- If a business rule is not recorded here, downstream agents must not invent it.
+
+## Confirmed Requirements
+
+- TODO: Review the user goal above and replace this line with confirmed requirements before implementation.
+"""
+        path.write_text(content, encoding="utf-8")
+
     def _agent_prompt_path(self, agent_name: str) -> Path:
         return self.harness_dir / AGENT_PROMPTS_DIR / f"{agent_name}.md"
 
@@ -191,6 +275,34 @@ class Workflow:
         content = self._default_agent_prompt(agent_name, role, objective, mode)
         path.write_text(content, encoding="utf-8")
         return content
+
+    def _read_required_agent_prompt(self, agent_name: str) -> str:
+        path = self._agent_prompt_path(agent_name)
+        if not path.exists():
+            raise RuntimeError(f"Missing prompt file: {path.relative_to(self.root).as_posix()}")
+        content = path.read_text(encoding="utf-8")
+        if not content.strip():
+            raise RuntimeError(f"Prompt file is empty: {path.relative_to(self.root).as_posix()}")
+        return content
+
+    def _missing_agent_prompts(self, order: list[str]) -> list[str]:
+        missing: list[str] = []
+        for name in self._unique_enabled_order(order):
+            path = self._agent_prompt_path(name)
+            if not path.exists() or not path.read_text(encoding="utf-8").strip():
+                missing.append(name)
+        return missing
+
+    def _unique_enabled_order(self, order: list[str]) -> list[str]:
+        unique: list[str] = []
+        seen: set[str] = set()
+        for name in order:
+            config = self.config.agents.get(name)
+            if not config or not config.enabled or name in seen:
+                continue
+            unique.append(name)
+            seen.add(name)
+        return unique
 
     def _default_agent_prompt(self, agent_name: str, role: str, objective: str, mode: str) -> str:
         requirements = self._read_text_if_exists(self.root / "docs" / "requirements.md")

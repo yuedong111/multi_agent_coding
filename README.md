@@ -2,7 +2,7 @@
 
 一个最小可运行的多 agent 代码开发 harness。它把你总结里的 Task Graph、Agent Loop、Worktree/目录隔离、Skill Loading、MessageBus、局部微调合在一起，目标是：
 
-- 一键指定项目根目录和目标，让多 agent 自动规划、生成结构、写代码、测试、产出上线说明。
+- 按“需求计划审核 -> agent prompt 审核 -> 执行实现”的三阶段流程，让多 agent 自动生成结构、写代码、测试、产出上线说明。
 - 每个 agent 可单独配置模型、`api_key_env` 和 `base_url`。
 - 通过 `skills/` 目录复用 Codex/Claude Code 风格工作流约束。
 - 后续可以用 refine 命令做局部微调，而不是整项目重来。
@@ -21,19 +21,37 @@ Copy-Item configs\agents.example.json agents.local.json
 $env:OPENAI_API_KEY="你的 key"
 ```
 
-3. 一键生成项目：
+3. 生成需求计划，供人工审核：
 
 ```powershell
-python -m harness_agent run --root C:\path\to\project --goal "做一个 FastAPI TODO API，包含测试和 README" --config agents.local.json
+python -m harness_agent plan --root C:\path\to\project --goal "做一个 FastAPI TODO API，包含测试和 README" --config agents.local.json
 ```
 
-默认会读取仓库根目录的 `AGENTS.md` 作为所有 agent 的全局提示词。也可以显式指定：
+该阶段会生成 `docs/requirements.md`。请人工审核并补充业务规则、边界条件、权限、状态流转和异常语义。
+
+4. 生成各 agent 的动态执行 prompt，供人工审核：
 
 ```powershell
-python -m harness_agent run --root C:\path\to\project --goal "做一个 FastAPI TODO API" --config agents.local.json --agents-md AGENTS.md
+python -m harness_agent prompts --root C:\path\to\project --goal "做一个 FastAPI TODO API，包含测试和 README" --config agents.local.json
 ```
 
-4. 局部微调：
+该阶段会生成 `.harness/agent-prompts/{agent}.md`。请人工审核每个 agent 的职责范围、需求引用、任务边界和风险。
+
+5. 按已审核的 requirements 和 agent prompts 执行：
+
+```powershell
+python -m harness_agent execute --root C:\path\to\project --goal "做一个 FastAPI TODO API，包含测试和 README" --config agents.local.json
+```
+
+默认会读取仓库根目录的 `AGENTS.md` 作为所有 agent 的全局提示词。每个命令都可以显式指定：
+
+```powershell
+python -m harness_agent execute --root C:\path\to\project --goal "做一个 FastAPI TODO API" --config agents.local.json --agents-md AGENTS.md
+```
+
+`run` 命令仍然可用，但它会连续执行 `plan`、`prompts`、`execute`，不会在审核点暂停。需要人工审核时，请使用上面的三步流程。
+
+6. 局部微调：
 
 ```powershell
 python -m harness_agent refine --root C:\path\to\project --request "只调整错误返回格式，保持接口路径不变" --config agents.local.json
@@ -111,13 +129,15 @@ LLM 通过 JSON action 调用工具，runtime 执行：
 
 工具只在 `--root` 指定目录下操作，避免 agent 随意改到别处。
 
-## 规划阶段澄清
+## 三阶段审核流
 
-build 模式不再预先写死任务图，而是让 `lead` 先做规划。`lead` 在创建实现任务前，如果发现会影响代码行为的业务规则、边界条件、权限、状态流转或异常语义不明确，可以调用 `ask_user`。
+build 流程拆成三个可单独运行的阶段，方便在关键材料进入执行前进行人工审核。
 
-runtime 会暂停当前 agent，直接在命令行向用户提问。用户回答后，答案会自动追加到 `docs/requirements.md`，再作为工具结果返回给 agent。随后 `lead` 基于已确认的需求文档创建任务图，后续 architect、coder、tester、reviewer 和 release 都以该文档和任务图为准。
+- `plan`：如果 `docs/requirements.md` 不存在或为空，生成需求计划模板；如果文件已有非空内容，则跳过并保留原文。该文件是业务规则和需求结论的审核入口。
+- `prompts`：读取已审核的 `docs/requirements.md`，创建基础任务图，并为执行阶段的 agent 生成 `.harness/agent-prompts/{agent}.md`；如果 prompt 文件已有非空内容，则跳过并保留原文。
+- `execute`：要求 `docs/requirements.md` 和执行阶段所需的 agent prompt 都已存在且非空，然后按 prompt 运行 agent 完成各自职责。
 
-如果目标项目中的 `docs/requirements.md` 已存在且内容非空，build 模式会把它视为已确认需求，跳过 `lead` 规划澄清阶段以节省 token。runtime 会创建一组基础任务图，并直接从 `architect` 开始执行。若该文件不存在或为空文件，则正常进入 `lead` 规划阶段。
+在执行阶段，如果某个 agent 发现会影响代码行为的业务规则仍不明确，可以调用 `ask_user`。runtime 会暂停当前 agent，直接在命令行向用户提问。用户回答后，答案会自动追加到 `docs/requirements.md`，再作为工具结果返回给 agent。
 
 ## 设计取舍
 
