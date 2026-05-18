@@ -21,6 +21,7 @@ class Agent:
         bus: MessageBus,
         skills: SkillLoader,
         runtime: ToolRuntime,
+        global_prompt: str = "",
     ):
         self.config = config
         self.root = root
@@ -29,8 +30,10 @@ class Agent:
         self.skills = skills
         self.runtime = runtime
         self.client = OpenAICompatibleClient(config)
+        self.global_prompt = global_prompt.strip()
+        self.runtime_loaded_skills = set(config.skills)
 
-    def run(self, objective: str) -> str:
+    def run(self, objective: str) -> dict[str, Any]:
         messages = [
             {"role": "system", "content": self._system_prompt()},
             {"role": "user", "content": objective},
@@ -46,11 +49,19 @@ class Agent:
 
             action = self._parse_action(raw)
             result = self.runtime.dispatch(self.config.name, action)
+            self._remember_loaded_skill(action, result)
             messages.append({"role": "user", "content": f"<tool_result>{json.dumps(result, ensure_ascii=False)}</tool_result>"})
             if result.get("finished"):
                 final = str(result.get("result", ""))
-                break
-        return final or f"{self.config.name} reached max steps"
+                status = str(result.get("status", "completed"))
+                if status not in {"completed", "failed"}:
+                    status = "failed"
+                return {"status": status, "summary": final, "steps": step + 1}
+        return {
+            "status": "failed",
+            "summary": final or f"{self.config.name} reached max steps",
+            "steps": self.config.max_steps,
+        }
 
     def _system_prompt(self) -> str:
         return f"""
@@ -59,10 +70,13 @@ Role: {self.config.role}
 
 Project root: {self.root}
 
+Global team instructions:
+{self.global_prompt or "(none)"}
+
 Skills available:
 {self.skills.descriptions()}
 
-Loaded skills:
+Default loaded skills:
 {self.skills.render(self.config.skills)}
 
 {TOOL_SPEC}
@@ -74,6 +88,7 @@ Loaded skills:
             {
                 "step": step,
                 "agent": self.config.name,
+                "loadedSkills": sorted(self.runtime_loaded_skills),
                 "tasks": tasks,
             },
             ensure_ascii=False,
@@ -93,3 +108,10 @@ Loaded skills:
         if "tool" not in action:
             return {"tool": "finish", "args": {"summary": raw}, "thought": "missing tool"}
         return action
+
+    def _remember_loaded_skill(self, action: dict[str, Any], result: dict[str, Any]) -> None:
+        if action.get("tool") != "load_skill" or not result.get("ok"):
+            return
+        payload = result.get("result")
+        if isinstance(payload, dict) and isinstance(payload.get("name"), str):
+            self.runtime_loaded_skills.add(payload["name"])

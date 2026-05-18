@@ -27,6 +27,12 @@ $env:OPENAI_API_KEY="你的 key"
 python -m harness_agent run --root C:\path\to\project --goal "做一个 FastAPI TODO API，包含测试和 README" --config agents.local.json
 ```
 
+默认会读取仓库根目录的 `AGENTS.md` 作为所有 agent 的全局提示词。也可以显式指定：
+
+```powershell
+python -m harness_agent run --root C:\path\to\project --goal "做一个 FastAPI TODO API" --config agents.local.json --agents-md AGENTS.md
+```
+
 4. 局部微调：
 
 ```powershell
@@ -68,6 +74,8 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 
 你可以让不同 agent 使用不同模型，比如 planner 用强模型，tester/release 用便宜模型。
 
+每个 agent 的 `skills` 是默认加载的技能。运行时还会扫描 `--skills-dir` 下所有 `SKILL.md`，把名称和描述提供给 agent。agent 如果发现某个未默认加载的技能适合当前任务，可以先调用 `load_skill` 工具按需加载，再继续执行。
+
 ## 支持的工具
 
 LLM 通过 JSON action 调用工具，runtime 执行：
@@ -80,6 +88,7 @@ LLM 通过 JSON action 调用工具，runtime 执行：
 - `create_task`
 - `update_task`
 - `send_message`
+- `load_skill`
 - `finish`
 
 工具只在 `--root` 指定目录下操作，避免 agent 随意改到别处。
@@ -90,5 +99,6 @@ LLM 通过 JSON action 调用工具，runtime 执行：
 
 - 任务与消息都落盘，便于恢复。
 - 每轮输出必须是结构化 JSON，便于 dispatch。
-- skills 按需拼进 agent system prompt。
+- 配置里的默认 skills 会拼进 agent system prompt；其他已发现 skills 可通过 `load_skill` 按需引用。
+- `AGENTS.md` 提供所有 agent 共用的边界、防护和协作规则。
 - refine 走同一套任务图，只增加变更任务，降低重写概率。

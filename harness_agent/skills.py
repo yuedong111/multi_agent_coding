@@ -23,6 +23,17 @@ class SkillLoader:
                 chunks.append(f'<skill name="{name}">\n{skill["body"]}\n</skill>')
         return "\n\n".join(chunks)
 
+    def load(self, name: str) -> dict[str, str]:
+        skill = self.skills.get(name)
+        if not skill:
+            available = ", ".join(sorted(self.skills)) or "none"
+            raise KeyError(f"Unknown skill {name!r}. Available skills: {available}")
+        return {
+            "name": name,
+            "description": skill["description"],
+            "body": skill["body"],
+        }
+
     def _scan(self) -> dict[str, dict[str, str]]:
         found = {}
         if not self.skills_dir.exists():
