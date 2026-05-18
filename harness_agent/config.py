@@ -17,6 +17,7 @@ class AgentConfig:
     max_steps: int
     skills: list[str]
     enabled: bool = True
+    max_parse_retries: int = 2
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ def load_config(path: Path) -> HarnessConfig:
             api_key_env=merged["api_key_env"],
             temperature=float(merged.get("temperature", 0.2)),
             max_steps=int(merged.get("max_steps", 12)),
+            max_parse_retries=int(merged.get("max_parse_retries", 2)),
             skills=list(merged.get("skills", [])),
             enabled=bool(merged.get("enabled", True)),
         )

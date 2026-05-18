@@ -4,7 +4,8 @@
     "api_key_env": "OPENAI_API_KEY",
     "model": "gpt-4.1-mini",
     "temperature": 0.2,
-    "max_steps": 12
+    "max_steps": 12,
+    "max_parse_retries": 2
   },
   "agents": {
     "lead": {

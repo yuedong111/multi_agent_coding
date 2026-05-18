@@ -115,6 +115,52 @@ description: Review generated code.
             self.assertEqual(action["tool"], "finish")
             self.assertEqual(action["args"]["summary"], "done")
 
+    def test_agent_retries_when_model_returns_invalid_json_action(self):
+        class FakeClient:
+            def __init__(self):
+                self.calls = 0
+
+            def complete(self, messages):
+                self.calls += 1
+                if self.calls == 1:
+                    return '{"tool":"finish","args":'
+                self.retry_prompt = messages[-1]["content"]
+                return '{"tool":"finish","args":{"summary":"done","status":"completed"}}'
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills_dir = base / "skills"
+            root.mkdir()
+            skills_dir.mkdir()
+            config = AgentConfig(
+                name="coder",
+                role="Write code.",
+                model="test-model",
+                base_url="https://example.test/v1",
+                api_key_env="TEST_API_KEY",
+                temperature=0.0,
+                max_steps=1,
+                skills=[],
+            )
+            agent = Agent(
+                config,
+                root,
+                TaskManager(root),
+                MessageBus(root),
+                SkillLoader(skills_dir),
+                ToolRuntime(root, TaskManager(root), MessageBus(root), SkillLoader(skills_dir)),
+            )
+            fake_client = FakeClient()
+            agent.client = fake_client
+
+            result = agent.run("Do the task.")
+
+            self.assertEqual(result["status"], "completed")
+            self.assertEqual(result["summary"], "done")
+            self.assertEqual(fake_client.calls, 2)
+            self.assertIn("could not be parsed", fake_client.retry_prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

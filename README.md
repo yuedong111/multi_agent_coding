@@ -99,6 +99,7 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 - `base_url`：OpenAI-compatible endpoint，例如 `https://api.openai.com/v1`。
 - `api_key_env`：从哪个环境变量读取 key。
 - `temperature`：温度。
+- `max_parse_retries`：模型输出不是合法 JSON 工具调用时，最多让模型重试几次。
 - `enabled`：是否启用。
 
 推荐先复制示例配置，再在本地文件里调整：
@@ -123,7 +124,8 @@ Copy-Item configs\agents.example.json agents.local.json
     "api_key_env": "OPENAI_API_KEY",
     "model": "gpt-4.1-mini",
     "temperature": 0.2,
-    "max_steps": 12
+    "max_steps": 12,
+    "max_parse_retries": 2
   },
   "agents": {
     "lead": {
@@ -162,6 +164,8 @@ python -m harness_agent execute --root C:\path\to\project --config agents.local.
 ```
 
 `base_url` 应填写到 API 版本前缀为止，不要包含 `/chat/completions`；runtime 会自动追加 `/chat/completions`。例如填写 `https://api.openai.com/v1`，最终请求地址是 `https://api.openai.com/v1/chat/completions`。
+
+模型每轮输出必须是一个 JSON 工具调用。如果输出了不完整 JSON、缺少 `tool` 字段，或把 JSON 写坏了，runtime 会把解析错误发回给同一个 agent，要求它重新生成。默认最多重试 2 次；如果仍然失败，该 agent 本轮会以 `failed` 结束，不会把坏内容派发给工具执行。
 
 运行流程按固定角色名调度：`lead`、`architect`、`coder`、`tester`、`reviewer`、`release`。如果某个角色没有在配置文件的 `agents` 中声明，或声明了但设置 `"enabled": false`，runtime 会跳过该角色对应的流程。额外声明但不在当前调度顺序里的角色不会自动运行，除非同步调整 workflow 里的调度顺序。
 

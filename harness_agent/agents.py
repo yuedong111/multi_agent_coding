@@ -47,10 +47,27 @@ class Agent:
             if inbox:
                 messages.append({"role": "user", "content": f"<inbox>{json.dumps(inbox, ensure_ascii=False)}</inbox>"})
             messages.append({"role": "user", "content": self._state_snapshot(step)})
-            raw = self.client.complete(messages)
-            messages.append({"role": "assistant", "content": raw})
+            action = None
+            parse_error = ""
+            for retry in range(self.config.max_parse_retries + 1):
+                raw = self.client.complete(messages)
+                messages.append({"role": "assistant", "content": raw})
+                try:
+                    action = self._parse_action(raw)
+                    break
+                except ValueError as exc:
+                    parse_error = str(exc)
+                    if retry >= self.config.max_parse_retries:
+                        return {
+                            "status": "failed",
+                            "summary": (
+                                f"{self.config.name} returned invalid JSON action "
+                                f"after {retry + 1} attempts: {parse_error}"
+                            ),
+                            "steps": step + 1,
+                        }
+                    messages.append({"role": "user", "content": self._retry_prompt(parse_error, raw)})
 
-            action = self._parse_action(raw)
             result = self.runtime.dispatch(self.config.name, action)
             self._remember_loaded_skill(action, result)
             messages.append({"role": "user", "content": f"<tool_result>{json.dumps(result, ensure_ascii=False)}</tool_result>"})
@@ -99,16 +116,28 @@ Default loaded skills:
         )
 
     def _parse_action(self, raw: str) -> dict[str, Any]:
-        # Non-JSON model output is treated as a final summary instead of being
-        # executed, which keeps accidental prose from triggering side effects.
         text = self._extract_json_candidate(raw)
         try:
             action = json.loads(text)
-        except json.JSONDecodeError:
-            action = {"tool": "finish", "args": {"summary": raw}, "thought": "non-json final"}
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"invalid JSON: {exc.msg} at line {exc.lineno} column {exc.colno}") from exc
         if "tool" not in action:
-            return {"tool": "finish", "args": {"summary": raw}, "thought": "missing tool"}
+            raise ValueError("missing required top-level field `tool`")
+        if not isinstance(action.get("args", {}), dict):
+            raise ValueError("field `args` must be an object when present")
         return action
+
+    def _retry_prompt(self, parse_error: str, raw: str) -> str:
+        snippet = raw.strip()
+        if len(snippet) > 2000:
+            snippet = snippet[:2000] + "... truncated"
+        return (
+            "Your previous response could not be parsed as a tool action.\n"
+            f"Parse error: {parse_error}\n"
+            "Return exactly one strict JSON object and no prose or Markdown.\n"
+            'Required shape: {"thought":"short reasoning","tool":"tool_name","args":{...}}\n'
+            f"Previous response:\n{snippet}"
+        )
 
     def _extract_json_candidate(self, raw: str) -> str:
         text = raw.strip()
