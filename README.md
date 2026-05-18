@@ -73,6 +73,8 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 - `temperature`：温度。
 - `enabled`：是否启用。
 
+运行流程按固定角色名调度：`lead`、`architect`、`coder`、`tester`、`reviewer`、`release`。如果某个角色没有在配置文件的 `agents` 中声明，或声明了但设置 `"enabled": false`，runtime 会跳过该角色对应的流程。额外声明但不在当前调度顺序里的角色不会自动运行，除非同步调整 workflow 里的调度顺序。
+
 你可以让不同 agent 使用不同模型，比如 planner 用强模型，tester/release 用便宜模型。
 
 每个 agent 的 `skills` 是默认加载的技能。运行时还会扫描 `--skills-dir` 下所有 `SKILL.md`，把名称和描述提供给 agent。agent 如果发现某个未默认加载的技能适合当前任务，可以先调用 `load_skill` 工具按需加载，再继续执行。
