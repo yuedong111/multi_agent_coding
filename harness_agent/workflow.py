@@ -9,16 +9,19 @@ from .config import HarnessConfig
 from .message_bus import MessageBus
 from .run_state import RunState
 from .skills import SkillLoader
+from .static_scan import StaticScanner
 from .task_manager import TaskManager
 from .tools import ToolRuntime
 
 
-DEFAULT_ORDER = ["lead", "architect", "coder", "tester", "reviewer", "coder", "tester", "release"]
-BUILD_EXECUTION_BASE_ORDER = ["architect", "tester", "reviewer", "release"]
-BUILD_EXECUTION_ORDER = DEFAULT_ORDER[1:]
 AGENT_PROMPTS_DIR = "agent-prompts"
 CODER_AGENT = "coder"
+INTEGRATOR_AGENT = "integrator"
+DEFAULT_ORDER = ["lead", "architect", CODER_AGENT, "tester", INTEGRATOR_AGENT, "reviewer", CODER_AGENT, "tester", "release"]
+BUILD_EXECUTION_BASE_ORDER = ["architect", "tester", INTEGRATOR_AGENT, "reviewer", "release"]
+BUILD_EXECUTION_ORDER = DEFAULT_ORDER[1:]
 CODER_SLICE_TARGET_CHARS = 2400
+FILE_PLAN_PATH = "docs/file-plan.md"
 
 
 class Workflow:
@@ -39,6 +42,7 @@ class Workflow:
         self.skills = SkillLoader(skills_dir)
         self.runtime = ToolRuntime(self.root, self.tasks, self.bus, self.skills)
         self.state = RunState(self.root)
+        self.scanner = StaticScanner(self.root)
         self.config = config
         self.global_prompt = global_prompt
         self.lang = "en" if lang == "en" else "zh"
@@ -74,6 +78,7 @@ class Workflow:
         if not self._requirements_has_content():
             raise RuntimeError("docs/requirements.md is empty or missing. Run the plan stage first.")
         self._bootstrap_tasks(goal)
+        self._ensure_file_plan(goal)
         objective = self._objective(goal, mode="build", use_existing_requirements=True)
         generated: dict[str, dict[str, str]] = {}
         for name in self._unique_enabled_order(BUILD_EXECUTION_BASE_ORDER):
@@ -156,7 +161,7 @@ class Workflow:
             owner="",
         )
         objective = self._objective(f"{request}{scope}", mode="refine", task_id=task.id)
-        return self._run_order(objective, mode="refine", order=["lead", "coder", "tester", "reviewer", "release"])
+        return self._run_order(objective, mode="refine", order=["lead", CODER_AGENT, "tester", INTEGRATOR_AGENT, "reviewer", "release"])
 
     def _run_order(
         self,
@@ -240,6 +245,21 @@ class Workflow:
                     "agentPrompt": self._agent_prompt_path(prompt_name).relative_to(self.root).as_posix(),
                 }
                 self.state.cleanup_isolation(isolated_root)
+                if name == CODER_AGENT:
+                    scan_result = self._run_static_scan(prompt_name)
+                    results[prompt_name]["staticScan"] = scan_result
+                    if scan_result["blockingIssueCount"]:
+                        self.state.restore_checkpoint(checkpoint.id)
+                        results[prompt_name] = {
+                            **results[prompt_name],
+                            "status": "failed",
+                            "summary": f"static scan found {scan_result['blockingIssueCount']} blocking issue(s)",
+                            "rolledBackTo": checkpoint.id,
+                        }
+                        state.update({"status": "failed", "results": results, "phase": "static_scan_failed"})
+                        self.state.save(state)
+                        self._write_summary(results)
+                        return results
             except Exception as exc:
                 self.state.restore_checkpoint(checkpoint.id)
                 results[prompt_name] = {
@@ -324,6 +344,90 @@ class Workflow:
         test = self.tasks.create("编写并运行测试", goal, blocked_by=[code.id], owner="")
         review = self.tasks.create("审查并修复问题", goal, blocked_by=[test.id], owner="")
         self.tasks.create("准备发布说明", goal, blocked_by=[review.id], owner="")
+
+    def _ensure_file_plan(self, goal: str) -> str:
+        path = self.root / FILE_PLAN_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists() and path.read_text(encoding="utf-8").strip():
+            return path.read_text(encoding="utf-8")
+        coder_slices = self._coder_business_slices()
+        if self.lang == "en":
+            sections = [
+                "# File Plan",
+                "",
+                "## Purpose",
+                "",
+                "This file is generated during the prompts stage for human review. It defines the intended file ownership and allowed paths for each implementation slice.",
+                "",
+                "## Project Goal",
+                "",
+                goal,
+                "",
+                "## Global Rules",
+                "",
+                "- Coder stages may modify only the paths listed for their slice unless a small integration change is required.",
+                "- Reuse existing project modules before creating new files.",
+                "- Tests should live beside the existing test structure.",
+                "- If the allowed paths are too vague, edit this file before running execute.",
+                "",
+                "## Slice Path Plan",
+                "",
+            ]
+            for index, business_slice in enumerate(coder_slices, start=1):
+                sections.extend(
+                    [
+                        f"### coder_{index}",
+                        "",
+                        "Allowed paths:",
+                        "",
+                        "- TODO: Replace with concrete relative paths or globs for this slice.",
+                        "",
+                        "Business slice:",
+                        "",
+                        business_slice.strip(),
+                        "",
+                    ]
+                )
+        else:
+            sections = [
+                "# 文件计划",
+                "",
+                "## 用途",
+                "",
+                "本文件在 prompts 阶段生成，供人工审核每个实现切片的文件归属和允许修改路径。",
+                "",
+                "## 项目目标",
+                "",
+                goal,
+                "",
+                "## 全局规则",
+                "",
+                "- 每个 coder 阶段只能修改本切片列出的路径；除非需要极小范围的集成改动。",
+                "- 创建新文件前优先复用现有项目模块。",
+                "- 测试应放在项目现有测试结构中。",
+                "- 如果允许路径仍然模糊，请在 execute 前人工编辑本文件。",
+                "",
+                "## 切片路径计划",
+                "",
+            ]
+            for index, business_slice in enumerate(coder_slices, start=1):
+                sections.extend(
+                    [
+                        f"### coder_{index}",
+                        "",
+                        "允许修改路径：",
+                        "",
+                        "- TODO: 请替换为本切片允许修改的相对路径或 glob。",
+                        "",
+                        "业务切片：",
+                        "",
+                        business_slice.strip(),
+                        "",
+                    ]
+                )
+        content = "\n".join(sections).rstrip() + "\n"
+        path.write_text(content, encoding="utf-8")
+        return content
 
     def _requirements_has_content(self) -> bool:
         path = self.root / "docs" / "requirements.md"
@@ -565,7 +669,11 @@ This prompt is generated for audit and execution. Runtime creates it only when t
 
 除非需要极小范围的集成改动，否则只实现以下切片：
 
-{business_slice.strip()}"""
+{business_slice.strip()}
+
+## 文件计划
+
+执行前读取 `{FILE_PLAN_PATH}`，并遵循本阶段允许修改路径。"""
 
         if occurrence == 1:
             focus = "Implement the first independent slice of the confirmed business requirements and leave later slices untouched unless needed for integration."
@@ -582,7 +690,11 @@ This prompt is generated for audit and execution. Runtime creates it only when t
 
 Implement only this slice unless a tiny integration change is required:
 
-{business_slice.strip()}"""
+{business_slice.strip()}
+
+## File Plan
+
+Before implementing, read `{FILE_PLAN_PATH}` and follow the allowed paths for this stage."""
 
     def _coder_audit_note(self) -> str:
         if self.lang == "zh":
@@ -664,6 +776,7 @@ Implement only this slice unless a tiny integration change is required:
 
     def _execution_context(self, results: dict) -> str:
         tree = self._project_tree_snapshot()
+        file_plan = self._read_text_if_exists(self.root / FILE_PLAN_PATH).strip()
         completed = {
             name: {
                 "status": result.get("status"),
@@ -692,9 +805,16 @@ Implement only this slice unless a tiny integration change is required:
 ### 对接要求
 
 - 后续实现必须基于当前文件系统继续，不要假设自己是第一阶段。
+- 执行前读取 `{FILE_PLAN_PATH}`，按对应阶段的允许路径落文件。
 - 写代码前先用 `list_files` 查看目录，并用 `read_file` 读取要修改或依赖的现有文件。
 - 优先复用已存在的模块、命名、接口、测试风格和配置。
 - 如果需要改动前序阶段生成的文件，只做与当前切片集成必需的最小修改。
+
+### 文件计划快照
+
+```markdown
+{file_plan or "(missing)"}
+```
 """
         return f"""## Current Project Context
 
@@ -713,10 +833,25 @@ Implement only this slice unless a tiny integration change is required:
 ### Integration Rules
 
 - Continue from the current filesystem; do not assume this is the first implementation stage.
+- Before implementing, read `{FILE_PLAN_PATH}` and write files under the allowed paths for this stage.
 - Before writing code, call `list_files` and `read_file` for existing files you will modify or depend on.
 - Reuse existing modules, naming, interfaces, tests, and configuration style.
 - If a previous-stage file must change, make only the smallest integration change needed for the current slice.
+
+### File Plan Snapshot
+
+```markdown
+{file_plan or "(missing)"}
+```
 """
+
+    def _run_static_scan(self, prompt_name: str) -> dict:
+        report = self.scanner.scan()
+        path = self.scanner.write_report(prompt_name, report)
+        return {
+            **report,
+            "reportPath": path.relative_to(self.root).as_posix(),
+        }
 
     def _project_tree_snapshot(self, limit: int = 200) -> str:
         lines: list[str] = []

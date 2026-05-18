@@ -32,6 +32,12 @@
       "role": "负责补测试、运行验证命令、根据 docs/requirements.md、任务图和自己的动态执行 prompt 检查实现覆盖情况，并根据失败日志提出修复。",
       "skills": ["testing"]
     },
+    "integrator": {
+      "enabled": true,
+      "model": "gpt-4.1",
+      "role": "负责在 reviewer 前整合前序代码：读取 docs/requirements.md、docs/file-plan.md、任务图、静态扫描报告和当前项目文件，统一命名、去除重复实现、串联接口、确认项目入口和测试命令形成完整工程。",
+      "skills": ["vibe-coding", "codex-style", "testing"]
+    },
     "reviewer": {
       "enabled": true,
       "model": "gpt-4.1-mini",
