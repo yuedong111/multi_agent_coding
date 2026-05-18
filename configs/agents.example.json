@@ -10,37 +10,37 @@
     "lead": {
       "enabled": true,
       "model": "gpt-4.1",
-      "role": "负责规划阶段的业务澄清门：在创建任务图前检查目标和现有文件，若业务规则、边界条件、权限、状态流转或异常语义会影响代码行为且不明确，必须先调用 ask_user；用户回答写入 docs/requirements.md 后，再基于已确认需求拆解任务图、协调其他 agent，并决定什么时候完成。",
+      "role": "负责规划阶段的业务澄清门：在创建任务图前检查目标和现有文件，若业务规则、边界条件、权限、状态流转或异常语义会影响代码行为且不明确，必须先调用 ask_user；用户回答写入 docs/requirements.md 后，再基于已确认需求拆解任务图、协调其他 agent，并确保后续 agent 的动态执行 prompt 能以 requirements 和任务图为依据。",
       "skills": ["vibe-coding", "task-graph"]
     },
     "architect": {
       "enabled": true,
       "model": "gpt-4.1",
-      "role": "负责项目结构、模块边界、接口契约、文件职责。",
+      "role": "负责项目结构、模块边界、接口契约、文件职责，并把这些边界落实为后续实现、测试和审查可遵循的执行范围。",
       "skills": ["vibe-coding"]
     },
     "coder": {
       "enabled": true,
       "model": "gpt-4.1",
-      "role": "负责最小必要代码实现，严格按计划创建和修改文件。",
+      "role": "负责最小必要代码实现，严格按 docs/requirements.md、任务图和自己的动态执行 prompt 创建和修改文件。",
       "skills": ["vibe-coding", "codex-style"]
     },
     "tester": {
       "enabled": true,
       "model": "gpt-4.1-mini",
-      "role": "负责补测试、运行验证命令、根据失败日志提出修复。",
+      "role": "负责补测试、运行验证命令、根据 docs/requirements.md、任务图和自己的动态执行 prompt 检查实现覆盖情况，并根据失败日志提出修复。",
       "skills": ["testing"]
     },
     "reviewer": {
       "enabled": true,
       "model": "gpt-4.1-mini",
-      "role": "负责代码审查，优先找 bug、回归风险、缺失测试。",
+      "role": "负责代码审查，优先根据 docs/requirements.md、任务图和自己的动态执行 prompt 找 bug、回归风险、缺失测试。",
       "skills": ["code-review"]
     },
     "release": {
       "enabled": true,
       "model": "gpt-4.1-mini",
-      "role": "负责 README、运行说明、部署清单、上线风险说明。",
+      "role": "负责 README、运行说明、部署清单、上线风险说明，并引用已确认需求、任务图和执行 prompt 中的范围与风险。",
       "skills": ["release"]
     }
   }

@@ -14,6 +14,7 @@ from .tools import ToolRuntime
 
 
 DEFAULT_ORDER = ["lead", "architect", "coder", "tester", "reviewer", "coder", "tester", "release"]
+AGENT_PROMPTS_DIR = "agent-prompts"
 
 
 class Workflow:
@@ -58,6 +59,7 @@ class Workflow:
             config = self.config.agents.get(name)
             if not config or not config.enabled:
                 continue
+            agent_prompt = self._ensure_agent_prompt(name, config.role, objective, mode)
             checkpoint = self.state.make_checkpoint(state["runId"], name, index)
             isolated_root = self.state.prepare_isolation(state["runId"], name, index)
             journal_path = self.state.journal_path(state["runId"], name, index)
@@ -83,7 +85,8 @@ class Workflow:
             )
             agent = Agent(config, isolated_root, self.tasks, self.bus, self.skills, isolated_runtime, self.global_prompt)
             try:
-                agent_objective = objective.replace(str(self.root), str(isolated_root))
+                agent_objective = self._objective_with_agent_prompt(objective, name, agent_prompt)
+                agent_objective = agent_objective.replace(str(self.root), str(isolated_root))
                 result = agent.run(agent_objective)
                 if name == "tester" and isolated_runtime.command_failures:
                     result = {
@@ -101,7 +104,12 @@ class Workflow:
                     self.state.cleanup_isolation(isolated_root)
                     return results
                 changed = self.state.merge_isolation(isolated_root)
-                results[name] = {**result, "checkpointId": checkpoint.id, "changedFiles": changed}
+                results[name] = {
+                    **result,
+                    "checkpointId": checkpoint.id,
+                    "changedFiles": changed,
+                    "agentPrompt": self._agent_prompt_path(name).relative_to(self.root).as_posix(),
+                }
                 self.state.cleanup_isolation(isolated_root)
             except Exception as exc:
                 self.state.restore_checkpoint(checkpoint.id)
@@ -168,6 +176,76 @@ class Workflow:
     def _requirements_has_content(self) -> bool:
         path = self.root / "docs" / "requirements.md"
         return path.exists() and bool(path.read_text(encoding="utf-8").strip())
+
+    def _agent_prompt_path(self, agent_name: str) -> Path:
+        return self.harness_dir / AGENT_PROMPTS_DIR / f"{agent_name}.md"
+
+    def _ensure_agent_prompt(self, agent_name: str, role: str, objective: str, mode: str) -> str:
+        path = self._agent_prompt_path(agent_name)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            existing = path.read_text(encoding="utf-8")
+            if existing.strip():
+                return existing
+
+        content = self._default_agent_prompt(agent_name, role, objective, mode)
+        path.write_text(content, encoding="utf-8")
+        return content
+
+    def _default_agent_prompt(self, agent_name: str, role: str, objective: str, mode: str) -> str:
+        requirements = self._read_text_if_exists(self.root / "docs" / "requirements.md")
+        task_payload = [task.__dict__ for task in self.tasks.list()]
+        requirements_text = requirements.strip() or "(docs/requirements.md is missing or empty.)"
+        tasks_text = json.dumps(task_payload, ensure_ascii=False, indent=2) if task_payload else "[]"
+        return f"""# Agent Prompt: {agent_name}
+
+## Purpose
+
+This prompt is generated for audit and execution. Runtime creates it only when this file is missing or empty; non-empty prompt files are preserved.
+
+## Agent Role
+
+{role or "(none)"}
+
+## Source Of Truth
+
+- Read and follow `docs/requirements.md` before making behavior decisions.
+- Treat confirmed requirements and the task graph as the source of truth.
+- Do not invent business rules. If missing business semantics would change behavior, use `ask_user` in planning or report the risk in your result.
+
+## Confirmed Requirements Snapshot
+
+{requirements_text}
+
+## Current Task Graph Snapshot
+
+```json
+{tasks_text}
+```
+
+## Execution Scope
+
+- Mode: {mode}
+- Work only inside the target project root.
+- Keep changes minimal and aligned with this role.
+- Preserve files outside your role unless a task dependency requires a small coordinated change.
+
+## Workflow Objective
+
+{objective}
+"""
+
+    def _read_text_if_exists(self, path: Path) -> str:
+        if not path.exists():
+            return ""
+        return path.read_text(encoding="utf-8")
+
+    def _objective_with_agent_prompt(self, objective: str, agent_name: str, agent_prompt: str) -> str:
+        return f"""{objective}
+
+Dynamic execution prompt for `{agent_name}`:
+{agent_prompt}
+""".strip()
 
     def _objective(
         self,

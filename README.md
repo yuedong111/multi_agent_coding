@@ -52,6 +52,7 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 - `.tasks/`：任务图，JSON 持久化。
 - `.team/`：队友配置、消息 inbox、事件日志。
 - `.harness/`：运行摘要、计划、验证报告、上线说明。
+- `.harness/agent-prompts/`：每个 agent 的动态执行 prompt，用于指导本轮执行，也供人工审核。
 - `docs/requirements.md`：规划阶段向用户澄清后的业务规则和需求结论。
 
 ## Agent 分工
@@ -76,6 +77,18 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 运行流程按固定角色名调度：`lead`、`architect`、`coder`、`tester`、`reviewer`、`release`。如果某个角色没有在配置文件的 `agents` 中声明，或声明了但设置 `"enabled": false`，runtime 会跳过该角色对应的流程。额外声明但不在当前调度顺序里的角色不会自动运行，除非同步调整 workflow 里的调度顺序。
 
 你可以让不同 agent 使用不同模型，比如 planner 用强模型，tester/release 用便宜模型。
+
+## 动态执行 Prompt
+
+`agents` 配置里的 `role` 是静态角色职责，适合描述某个 agent 长期负责什么；具体到某次运行的执行边界、需求快照、任务图和审核依据，会落到 `.harness/agent-prompts/{agent}.md`。
+
+每个 agent 启动前，runtime 会检查对应 prompt 文件：
+
+- 如果文件不存在或内容为空，会根据当前 `docs/requirements.md`、任务图、角色职责和本次 objective 生成默认 prompt。
+- 如果文件已经存在且内容非空，runtime 会保留该文件，不会覆盖人工或上游流程已生成的内容。
+- 同一份 prompt 会追加进该 agent 的执行 objective，因此它既是运行依据，也是人工审核材料。
+
+这种设计把业务规则和执行职责分开：`docs/requirements.md` 记录已确认业务规则，任务图记录工作拆分，`.harness/agent-prompts/*.md` 记录每个 agent 本轮应该如何按这些材料执行。
 
 每个 agent 的 `skills` 是默认加载的技能。运行时还会扫描 `--skills-dir` 下所有 `SKILL.md`，把名称和描述提供给 agent。agent 如果发现某个未默认加载的技能适合当前任务，可以先调用 `load_skill` 工具按需加载，再继续执行。
 

@@ -60,6 +60,41 @@ class WorkflowRequirementsGateTest(unittest.TestCase):
 
             self.assertIn("The lead agent owns the initial plan", objective)
 
+    def test_agent_prompt_is_generated_when_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            (root / "docs").mkdir(parents=True)
+            skills.mkdir()
+            (root / "docs" / "requirements.md").write_text("Confirmed rule.\n", encoding="utf-8")
+            workflow = Workflow(root, config(), skills, "")
+            workflow.tasks.create("Implement feature", "Use the confirmed rule.", owner="coder")
+
+            prompt = workflow._ensure_agent_prompt("coder", "coder role", "Build the app", "build")
+
+            prompt_path = root / ".harness" / "agent-prompts" / "coder.md"
+            self.assertTrue(prompt_path.exists())
+            self.assertIn("Confirmed rule.", prompt)
+            self.assertIn("Implement feature", prompt)
+            self.assertIn("coder role", prompt)
+
+    def test_non_empty_agent_prompt_is_preserved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            skills.mkdir()
+            workflow = Workflow(root, config(), skills, "")
+            prompt_path = root / ".harness" / "agent-prompts" / "coder.md"
+            prompt_path.parent.mkdir(parents=True)
+            prompt_path.write_text("Manual prompt.\n", encoding="utf-8")
+
+            prompt = workflow._ensure_agent_prompt("coder", "new role", "Build the app", "build")
+
+            self.assertEqual(prompt, "Manual prompt.\n")
+            self.assertEqual(prompt_path.read_text(encoding="utf-8"), "Manual prompt.\n")
+
 
 if __name__ == "__main__":
     unittest.main()
