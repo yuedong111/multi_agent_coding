@@ -140,9 +140,42 @@ class WorkflowRequirementsGateTest(unittest.TestCase):
 
             self.assertIn("architect", result)
             self.assertIn("coder", result)
+            self.assertIn("coder_1", result)
             self.assertNotIn("lead", result)
             self.assertTrue((root / ".harness" / "agent-prompts" / "coder.md").exists())
+            self.assertTrue((root / ".harness" / "agent-prompts" / "coder_1.md").exists())
             self.assertEqual(workflow._missing_agent_prompts(["architect", "coder"]), [])
+
+    def test_prompts_stage_splits_large_requirements_into_coder_stages(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            (root / "docs").mkdir(parents=True)
+            skills.mkdir()
+            requirements = "\n\n".join(
+                [
+                    "# Business Requirements",
+                    "## Accounts\n" + ("Create account business rule. " * 120),
+                    "## Billing\n" + ("Invoice business rule. " * 120),
+                    "## Notifications\n" + ("Notify business rule. " * 120),
+                ]
+            )
+            (root / "docs" / "requirements.md").write_text(requirements, encoding="utf-8")
+            workflow = Workflow(root, config(), skills, "")
+
+            result = workflow.generate_prompts("Build the platform.")
+            order = workflow._build_execution_order()
+
+            self.assertIn("coder_2", result)
+            self.assertTrue((root / ".harness" / "agent-prompts" / "coder_2.md").exists())
+            self.assertEqual(order.count("coder"), workflow._reviewed_coder_prompt_count())
+            coder_prompt = (root / ".harness" / "agent-prompts" / "coder_1.md").read_text(encoding="utf-8")
+            self.assertIn("Assigned Business Slice", coder_prompt)
+            self.assertIn("coder.md` is an audit overview only", coder_prompt)
+            self.assertIn("Create account business rule.", coder_prompt)
+            self.assertNotIn("Invoice business rule.", coder_prompt)
+            self.assertIn("intentionally embeds only the assigned business slice", coder_prompt)
 
     def test_execute_requires_reviewed_prompts(self):
         with tempfile.TemporaryDirectory() as tmp:

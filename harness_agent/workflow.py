@@ -14,8 +14,11 @@ from .tools import ToolRuntime
 
 
 DEFAULT_ORDER = ["lead", "architect", "coder", "tester", "reviewer", "coder", "tester", "release"]
+BUILD_EXECUTION_BASE_ORDER = ["architect", "tester", "reviewer", "release"]
 BUILD_EXECUTION_ORDER = DEFAULT_ORDER[1:]
 AGENT_PROMPTS_DIR = "agent-prompts"
+CODER_AGENT = "coder"
+CODER_SLICE_TARGET_CHARS = 2400
 
 
 class Workflow:
@@ -63,7 +66,7 @@ class Workflow:
         self._bootstrap_tasks(goal)
         objective = self._objective(goal, mode="build", use_existing_requirements=True)
         generated: dict[str, dict[str, str]] = {}
-        for name in self._unique_enabled_order(BUILD_EXECUTION_ORDER):
+        for name in self._unique_enabled_order(BUILD_EXECUTION_BASE_ORDER):
             config = self.config.agents[name]
             path = self._agent_prompt_path(name)
             existed_with_content = path.exists() and bool(path.read_text(encoding="utf-8").strip())
@@ -75,6 +78,46 @@ class Workflow:
                 if existed_with_content
                 else "Generated dynamic execution prompt for review.",
             }
+        coder_config = self.config.agents.get(CODER_AGENT)
+        if coder_config and coder_config.enabled:
+            audit_path = self._agent_prompt_path(CODER_AGENT)
+            existed_with_content = audit_path.exists() and bool(audit_path.read_text(encoding="utf-8").strip())
+            self._ensure_agent_prompt(
+                CODER_AGENT,
+                coder_config.role,
+                objective,
+                "build",
+                stage_note=self._coder_audit_note(),
+            )
+            generated[CODER_AGENT] = {
+                "status": "skipped" if existed_with_content else "completed",
+                "promptPath": audit_path.relative_to(self.root).as_posix(),
+                "summary": "Existing non-empty coder audit prompt preserved."
+                if existed_with_content
+                else "Generated coder audit prompt; execution uses coder_*.md files.",
+            }
+
+            coder_slices = self._coder_business_slices()
+            for occurrence, business_slice in enumerate(coder_slices, start=1):
+                prompt_name = self._coder_prompt_name(occurrence)
+                path = self._agent_prompt_path(prompt_name)
+                existed_with_content = path.exists() and bool(path.read_text(encoding="utf-8").strip())
+                self._ensure_agent_prompt(
+                    prompt_name,
+                    coder_config.role,
+                    objective,
+                    "build",
+                    agent_name=CODER_AGENT,
+                    stage_note=self._coder_stage_note(occurrence, len(coder_slices), business_slice),
+                    requirements_snapshot=self._coder_execution_requirements_note(),
+                )
+                generated[prompt_name] = {
+                    "status": "skipped" if existed_with_content else "completed",
+                    "promptPath": path.relative_to(self.root).as_posix(),
+                    "summary": "Existing non-empty coder stage prompt preserved."
+                    if existed_with_content
+                    else "Generated coder stage prompt for execution.",
+                }
         self._write_summary({"prompts": generated})
         return generated
 
@@ -83,12 +126,13 @@ class Workflow:
         if not self._requirements_has_content():
             raise RuntimeError("docs/requirements.md is empty or missing. Run the plan stage first.")
         self._bootstrap_tasks(goal)
-        missing = self._missing_agent_prompts(BUILD_EXECUTION_ORDER)
+        order = self._build_execution_order()
+        missing = self._missing_agent_prompts(order, mode="build")
         if missing:
             names = ", ".join(missing)
             raise RuntimeError(f"Missing dynamic prompts for: {names}. Run the prompts stage first.")
         objective = self._objective(goal, mode="build", use_existing_requirements=True)
-        return self._run_order(objective, mode="build", order=BUILD_EXECUTION_ORDER, allow_prompt_generation=False)
+        return self._run_order(objective, mode="build", order=order, allow_prompt_generation=False)
 
     def refine(self, request: str, files: list[str] | None = None) -> dict:
         scope = f"\nAllowed files: {', '.join(files)}" if files else "\nAllowed files: infer minimal scope"
@@ -111,14 +155,17 @@ class Workflow:
         state = self._load_or_begin_state(mode, objective, order)
         results = state.get("results", {})
         start_index = int(state.get("currentIndex", 0))
+        occurrences: dict[str, int] = {}
         for index, name in enumerate(order[start_index:], start=start_index):
             config = self.config.agents.get(name)
             if not config or not config.enabled:
                 continue
+            occurrences[name] = self._agent_occurrences(order[: index + 1], name)
+            prompt_name = self._execution_prompt_name(name, mode, occurrences[name])
             agent_prompt = (
-                self._ensure_agent_prompt(name, config.role, objective, mode)
+                self._ensure_agent_prompt(prompt_name, config.role, objective, mode, agent_name=name)
                 if allow_prompt_generation
-                else self._read_required_agent_prompt(name)
+                else self._read_required_agent_prompt(prompt_name)
             )
             checkpoint = self.state.make_checkpoint(state["runId"], name, index)
             isolated_root = self.state.prepare_isolation(state["runId"], name, index)
@@ -157,23 +204,23 @@ class Workflow:
                     }
                 if result.get("status") != "completed":
                     self.state.restore_checkpoint(checkpoint.id)
-                    results[name] = {**result, "rolledBackTo": checkpoint.id}
+                    results[prompt_name] = {**result, "rolledBackTo": checkpoint.id}
                     state.update({"status": "failed", "results": results, "phase": "rolled_back"})
                     self.state.save(state)
                     self._write_summary(results)
                     self.state.cleanup_isolation(isolated_root)
                     return results
                 changed = self.state.merge_isolation(isolated_root)
-                results[name] = {
+                results[prompt_name] = {
                     **result,
                     "checkpointId": checkpoint.id,
                     "changedFiles": changed,
-                    "agentPrompt": self._agent_prompt_path(name).relative_to(self.root).as_posix(),
+                    "agentPrompt": self._agent_prompt_path(prompt_name).relative_to(self.root).as_posix(),
                 }
                 self.state.cleanup_isolation(isolated_root)
             except Exception as exc:
                 self.state.restore_checkpoint(checkpoint.id)
-                results[name] = {
+                results[prompt_name] = {
                     "status": "failed",
                     "summary": str(exc),
                     "checkpointId": checkpoint.id,
@@ -199,6 +246,16 @@ class Workflow:
         state.update({"status": "completed", "currentIndex": len(order), "currentAgent": "", "checkpointId": ""})
         self.state.save(state)
         return results
+
+    def _build_execution_order(self) -> list[str]:
+        order: list[str] = []
+        for name in BUILD_EXECUTION_BASE_ORDER:
+            if name == "tester":
+                coder_count = self._reviewed_coder_prompt_count()
+                order.extend([CODER_AGENT, "tester"] * max(coder_count, 1))
+                continue
+            order.append(name)
+        return order
 
     def _load_or_begin_state(self, mode: str, objective: str, order: list[str]) -> dict:
         state = self.state.load()
@@ -264,15 +321,31 @@ class Workflow:
     def _agent_prompt_path(self, agent_name: str) -> Path:
         return self.harness_dir / AGENT_PROMPTS_DIR / f"{agent_name}.md"
 
-    def _ensure_agent_prompt(self, agent_name: str, role: str, objective: str, mode: str) -> str:
-        path = self._agent_prompt_path(agent_name)
+    def _ensure_agent_prompt(
+        self,
+        prompt_name: str,
+        role: str,
+        objective: str,
+        mode: str,
+        agent_name: str | None = None,
+        stage_note: str = "",
+        requirements_snapshot: str | None = None,
+    ) -> str:
+        path = self._agent_prompt_path(prompt_name)
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             existing = path.read_text(encoding="utf-8")
             if existing.strip():
                 return existing
 
-        content = self._default_agent_prompt(agent_name, role, objective, mode)
+        content = self._default_agent_prompt(
+            agent_name or prompt_name,
+            role,
+            objective,
+            mode,
+            stage_note,
+            requirements_snapshot,
+        )
         path.write_text(content, encoding="utf-8")
         return content
 
@@ -285,13 +358,34 @@ class Workflow:
             raise RuntimeError(f"Prompt file is empty: {path.relative_to(self.root).as_posix()}")
         return content
 
-    def _missing_agent_prompts(self, order: list[str]) -> list[str]:
+    def _missing_agent_prompts(self, order: list[str], mode: str = "build") -> list[str]:
         missing: list[str] = []
-        for name in self._unique_enabled_order(order):
-            path = self._agent_prompt_path(name)
+        occurrences: dict[str, int] = {}
+        for name in order:
+            config = self.config.agents.get(name)
+            if not config or not config.enabled:
+                continue
+            occurrences[name] = occurrences.get(name, 0) + 1
+            prompt_name = self._execution_prompt_name(name, mode, occurrences[name])
+            path = self._agent_prompt_path(prompt_name)
             if not path.exists() or not path.read_text(encoding="utf-8").strip():
-                missing.append(name)
+                missing.append(prompt_name)
         return missing
+
+    def _agent_occurrences(self, order: list[str], agent_name: str) -> int:
+        return sum(
+            1
+            for name in order
+            if name == agent_name and (config := self.config.agents.get(name)) and config.enabled
+        )
+
+    def _coder_prompt_name(self, occurrence: int) -> str:
+        return f"{CODER_AGENT}_{occurrence}"
+
+    def _execution_prompt_name(self, agent_name: str, mode: str, occurrence: int) -> str:
+        if mode == "build" and agent_name == CODER_AGENT:
+            return self._coder_prompt_name(occurrence)
+        return agent_name
 
     def _unique_enabled_order(self, order: list[str]) -> list[str]:
         unique: list[str] = []
@@ -304,10 +398,22 @@ class Workflow:
             seen.add(name)
         return unique
 
-    def _default_agent_prompt(self, agent_name: str, role: str, objective: str, mode: str) -> str:
+    def _default_agent_prompt(
+        self,
+        agent_name: str,
+        role: str,
+        objective: str,
+        mode: str,
+        stage_note: str = "",
+        requirements_snapshot: str | None = None,
+    ) -> str:
         requirements = self._read_text_if_exists(self.root / "docs" / "requirements.md")
         task_payload = [task.__dict__ for task in self.tasks.list()]
-        requirements_text = requirements.strip() or "(docs/requirements.md is missing or empty.)"
+        requirements_text = (
+            requirements_snapshot
+            if requirements_snapshot is not None
+            else requirements.strip() or "(docs/requirements.md is missing or empty.)"
+        )
         tasks_text = json.dumps(task_payload, ensure_ascii=False, indent=2) if task_payload else "[]"
         return f"""# Agent Prompt: {agent_name}
 
@@ -341,11 +447,92 @@ This prompt is generated for audit and execution. Runtime creates it only when t
 - Work only inside the target project root.
 - Keep changes minimal and aligned with this role.
 - Preserve files outside your role unless a task dependency requires a small coordinated change.
+{stage_note}
 
 ## Workflow Objective
 
 {objective}
 """
+
+    def _coder_stage_note(self, occurrence: int, total: int, business_slice: str) -> str:
+        if occurrence == 1:
+            focus = "Implement the first independent slice of the confirmed business requirements and leave later slices untouched unless needed for integration."
+        else:
+            focus = "Continue from earlier coder output and implement the next independent slice, focusing on incomplete business behavior and review/test feedback."
+        return f"""- Coder stage: {occurrence}
+- Coder stages total: {total}
+- This file is the execution prompt for coder pass {occurrence}; load this prompt instead of `coder.md`.
+- `coder.md` is an audit overview only and must not be used as the execution source.
+- {focus}
+- Keep the implemented slice coherent and verifiable before finishing.
+
+## Assigned Business Slice
+
+Implement only this slice unless a tiny integration change is required:
+
+{business_slice.strip()}"""
+
+    def _coder_audit_note(self) -> str:
+        return """- This `coder.md` file is for human audit of the overall coder responsibility only.
+- Build execution loads `coder_1.md`, `coder_2.md`, ... as the authoritative code-generation prompts.
+- Do not rely on this audit overview as the source for implementation details."""
+
+    def _coder_execution_requirements_note(self) -> str:
+        return (
+            "Full requirements are available in `docs/requirements.md` and should be read when needed. "
+            "This execution prompt intentionally embeds only the assigned business slice below to keep "
+            "the coder context focused."
+        )
+
+    def _coder_business_slices(self) -> list[str]:
+        requirements = self._read_text_if_exists(self.root / "docs" / "requirements.md").strip()
+        if not requirements:
+            return ["(No confirmed requirements were available.)"]
+        sections = self._split_markdown_sections(requirements)
+        slices: list[str] = []
+        current: list[str] = []
+        current_size = 0
+        for section in sections:
+            section_size = len(section)
+            if current and current_size + section_size > CODER_SLICE_TARGET_CHARS:
+                slices.append("\n\n".join(current))
+                current = []
+                current_size = 0
+            current.append(section)
+            current_size += section_size
+        if current:
+            slices.append("\n\n".join(current))
+        return slices or [requirements]
+
+    def _split_markdown_sections(self, text: str) -> list[str]:
+        sections: list[str] = []
+        current: list[str] = []
+        for line in text.splitlines():
+            if line.startswith("## ") and any(item.startswith("## ") for item in current):
+                sections.append("\n".join(current).strip())
+                current = []
+            current.append(line)
+        if current:
+            sections.append("\n".join(current).strip())
+        if len(sections) <= 1:
+            return self._split_by_paragraphs(text)
+        return [section for section in sections if section]
+
+    def _split_by_paragraphs(self, text: str) -> list[str]:
+        paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
+        return paragraphs or [text]
+
+    def _reviewed_coder_prompt_count(self) -> int:
+        prompts_dir = self.harness_dir / AGENT_PROMPTS_DIR
+        if not prompts_dir.exists():
+            return 0
+        count = 0
+        while True:
+            path = prompts_dir / f"{CODER_AGENT}_{count + 1}.md"
+            if not path.exists() or not path.read_text(encoding="utf-8").strip():
+                break
+            count += 1
+        return count
 
     def _read_text_if_exists(self, path: Path) -> str:
         if not path.exists():

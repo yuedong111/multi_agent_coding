@@ -27,7 +27,7 @@ $env:OPENAI_API_KEY="你的 key"
 Set-Content C:\path\to\project\goal.md "做一个 FastAPI TODO API，包含测试和 README"
 ```
 
-build 类命令默认从 `--root` 下的 `goal.md` 读取目标；也可以用 `--goal-file` 指定其他 Markdown 文件。
+build 类命令固定从 `--root` 下的 `goal.md` 读取目标。
 
 4. 生成需求计划，供人工审核：
 
@@ -54,7 +54,7 @@ python -m harness_agent execute --root C:\path\to\project --config agents.local.
 默认会读取仓库根目录的 `AGENTS.md` 作为所有 agent 的全局提示词。每个命令都可以显式指定：
 
 ```powershell
-python -m harness_agent execute --root C:\path\to\project --config agents.local.json --goal-file specs\goal.md --agents-md AGENTS.md
+python -m harness_agent execute --root C:\path\to\project --config agents.local.json --agents-md AGENTS.md
 ```
 
 `run` 命令仍然可用，但它会连续执行 `plan`、`prompts`、`execute`，不会在审核点暂停。需要人工审核时，请使用上面的三步流程。
@@ -142,7 +142,7 @@ LLM 通过 JSON action 调用工具，runtime 执行：
 
 build 流程拆成三个可单独运行的阶段，方便在关键材料进入执行前进行人工审核。
 
-- build 类命令默认从目标项目根目录的 `goal.md` 读取用户目标；命令行不再通过 `--goal` 传入长字符串。
+- build 类命令固定从目标项目根目录的 `goal.md` 读取用户目标；命令行不再通过 `--goal` 传入长字符串。
 - `plan`：如果 `docs/requirements.md` 不存在或为空，生成需求计划模板；如果文件已有非空内容，则跳过并保留原文。该文件是业务规则和需求结论的审核入口。
 - `prompts`：读取已审核的 `docs/requirements.md`，创建基础任务图，并为执行阶段的 agent 生成 `.harness/agent-prompts/{agent}.md`；如果 prompt 文件已有非空内容，则跳过并保留原文。
 - `execute`：要求 `docs/requirements.md` 和执行阶段所需的 agent prompt 都已存在且非空，然后按 prompt 运行 agent 完成各自职责。
