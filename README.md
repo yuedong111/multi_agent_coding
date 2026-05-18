@@ -101,6 +101,68 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 - `temperature`：温度。
 - `enabled`：是否启用。
 
+推荐先复制示例配置，再在本地文件里调整：
+
+```powershell
+Copy-Item configs\agents.example.json agents.local.json
+```
+
+配置由两层组成：
+
+- `defaults`：所有 agent 的默认配置。
+- `agents`：按角色名分别配置 agent；这里写的字段会覆盖 `defaults` 里的同名字段。
+
+因此，如果大多数 agent 使用同一个供应商，只需要在 `defaults` 写一次 `base_url`、`api_key_env` 和默认 `model`；需要特殊模型或特殊供应商的 agent，再在自己的配置块里覆盖。
+
+示例：
+
+```json
+{
+  "defaults": {
+    "base_url": "https://api.openai.com/v1",
+    "api_key_env": "OPENAI_API_KEY",
+    "model": "gpt-4.1-mini",
+    "temperature": 0.2,
+    "max_steps": 12
+  },
+  "agents": {
+    "lead": {
+      "enabled": true,
+      "model": "gpt-4.1",
+      "role": "负责规划、澄清和任务拆分。"
+    },
+    "coder": {
+      "enabled": true,
+      "base_url": "https://your-openai-compatible-host.example/v1",
+      "api_key_env": "CODER_API_KEY",
+      "model": "your-coder-model",
+      "role": "负责最小必要代码实现。"
+    },
+    "tester": {
+      "enabled": true,
+      "model": "gpt-4.1-mini",
+      "role": "负责补测试和运行验证命令。"
+    }
+  }
+}
+```
+
+上面示例中：
+
+- `lead` 没有写 `base_url` 和 `api_key_env`，所以继承 `defaults`，使用 `OPENAI_API_KEY`。
+- `coder` 覆盖了 `base_url`、`api_key_env` 和 `model`，所以会向 `https://your-openai-compatible-host.example/v1/chat/completions` 发请求，并从 `CODER_API_KEY` 读取 key。
+- `tester` 只覆盖了 `model`，其他连接参数继续继承 `defaults`。
+
+需要为多个供应商配置 key 时，在运行命令前设置对应环境变量：
+
+```powershell
+$env:OPENAI_API_KEY="openai-key"
+$env:CODER_API_KEY="coder-provider-key"
+python -m harness_agent execute --root C:\path\to\project --config agents.local.json
+```
+
+`base_url` 应填写到 API 版本前缀为止，不要包含 `/chat/completions`；runtime 会自动追加 `/chat/completions`。例如填写 `https://api.openai.com/v1`，最终请求地址是 `https://api.openai.com/v1/chat/completions`。
+
 运行流程按固定角色名调度：`lead`、`architect`、`coder`、`tester`、`reviewer`、`release`。如果某个角色没有在配置文件的 `agents` 中声明，或声明了但设置 `"enabled": false`，runtime 会跳过该角色对应的流程。额外声明但不在当前调度顺序里的角色不会自动运行，除非同步调整 workflow 里的调度顺序。
 
 你可以让不同 agent 使用不同模型，比如 planner 用强模型，tester/release 用便宜模型。
