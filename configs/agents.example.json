@@ -9,7 +9,7 @@
   "agents": {
     "lead": {
       "model": "gpt-4.1",
-      "role": "负责澄清目标、拆解任务图、协调其他 agent，并决定什么时候完成。",
+      "role": "负责规划阶段的业务澄清门：在创建任务图前检查目标和现有文件，若业务规则、边界条件、权限、状态流转或异常语义会影响代码行为且不明确，必须先调用 ask_user；用户回答写入 docs/requirements.md 后，再基于已确认需求拆解任务图、协调其他 agent，并决定什么时候完成。",
       "skills": ["vibe-coding", "task-graph"]
     },
     "architect": {

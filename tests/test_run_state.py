@@ -71,6 +71,43 @@ class ToolRuntimeJournalTest(unittest.TestCase):
             self.assertEqual(entries[1]["before"], "one\n")
             self.assertEqual(entries[1]["after"], "one\ntwo\n")
 
+    def test_ask_user_records_answer_in_requirements_doc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills_dir = root / "skills"
+            skills_dir.mkdir()
+            seen = {}
+
+            def answer_question(payload):
+                seen.update(payload)
+                return "Use soft delete for user-visible records."
+
+            runtime = ToolRuntime(
+                root,
+                TaskManager(root),
+                MessageBus(root),
+                SkillLoader(skills_dir),
+                user_question_handler=answer_question,
+            )
+
+            result = runtime.dispatch(
+                "lead",
+                {
+                    "tool": "ask_user",
+                    "args": {
+                        "question": "Should deletes be hard or soft?",
+                        "impact": "Affects storage and API delete behavior.",
+                    },
+                },
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(seen["agent"], "lead")
+            self.assertEqual(result["result"]["requirementsPath"], "docs/requirements.md")
+            requirements = (root / "docs" / "requirements.md").read_text(encoding="utf-8")
+            self.assertIn("Should deletes be hard or soft?", requirements)
+            self.assertIn("Use soft delete for user-visible records.", requirements)
+
 
 if __name__ == "__main__":
     unittest.main()

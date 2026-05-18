@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import subprocess
-from typing import Any
+from typing import Any, Callable
 from time import time
+from datetime import datetime, timezone
 
 from .message_bus import MessageBus
 from .skills import SkillLoader
 from .task_manager import TaskManager
+
+UserQuestionHandler = Callable[[dict[str, str]], str]
 
 
 class ToolRuntime:
@@ -19,12 +22,16 @@ class ToolRuntime:
         bus: MessageBus,
         skills: SkillLoader,
         journal_path: Path | None = None,
+        user_question_handler: UserQuestionHandler | None = None,
+        requirements_path: str = "docs/requirements.md",
     ):
         self.root = root.resolve()
         self.tasks = tasks
         self.bus = bus
         self.skills = skills
         self.journal_path = journal_path
+        self.user_question_handler = user_question_handler
+        self.requirements_path = requirements_path
         self.command_failures: list[dict[str, Any]] = []
 
     def dispatch(self, agent: str, action: dict[str, Any]) -> dict[str, Any]:
@@ -56,6 +63,24 @@ class ToolRuntime:
                 return self._ok(task.__dict__)
             if name == "send_message":
                 return self._ok(self.bus.send(agent, args["to"], args["content"]))
+            if name == "ask_user":
+                return self._ok(
+                    self.ask_user(
+                        agent,
+                        question=args["question"],
+                        impact=args.get("impact", ""),
+                        path=args.get("path"),
+                    )
+                )
+            if name == "record_requirement":
+                return self._ok(
+                    self.record_requirement(
+                        question=args["question"],
+                        impact=args.get("impact", ""),
+                        answer=args["answer"],
+                        path=args.get("path"),
+                    )
+                )
             if name == "finish":
                 return {
                     "ok": True,
@@ -130,6 +155,57 @@ class ToolRuntime:
             self.command_failures.append({"command": command, **output})
         return json.dumps(output, ensure_ascii=False, indent=2)
 
+    def ask_user(self, agent: str, question: str, impact: str = "", path: str | None = None) -> dict[str, str]:
+        if not self.user_question_handler:
+            raise RuntimeError("User input is required, but no user question handler is configured")
+        payload = {
+            "agent": agent,
+            "question": question.strip(),
+            "impact": impact.strip(),
+            "path": path or self.requirements_path,
+        }
+        answer = self.user_question_handler(payload).strip()
+        if not answer:
+            raise RuntimeError("User answer cannot be empty")
+        requirements_path = self.record_requirement(
+            question=payload["question"],
+            impact=payload["impact"],
+            answer=answer,
+            path=payload["path"],
+        )
+        return {
+            "question": payload["question"],
+            "impact": payload["impact"],
+            "answer": answer,
+            "requirementsPath": requirements_path,
+        }
+
+    def record_requirement(self, question: str, impact: str, answer: str, path: str | None = None) -> str:
+        target = self._safe(path or self.requirements_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        before = self._read_optional(target)
+        if not target.exists():
+            target.write_text("# Business Requirements\n\n", encoding="utf-8")
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        entry = [
+            "## User Clarification",
+            "",
+            f"- Time: {timestamp}",
+            f"- Question: {question.strip()}",
+        ]
+        if impact.strip():
+            entry.append(f"- Impact: {impact.strip()}")
+        entry.extend(
+            [
+                f"- Answer: {answer.strip()}",
+                "",
+            ]
+        )
+        with target.open("a", encoding="utf-8") as file:
+            file.write("\n".join(entry))
+        self._journal_file_change("record_requirement", target, before, self._read_optional(target))
+        return target.relative_to(self.root).as_posix()
+
     def _safe(self, path: str) -> Path:
         target = (self.root / path).resolve()
         if target != self.root and self.root not in target.parents:
@@ -177,6 +253,8 @@ Available tools:
 - create_task {"subject":"title","description":"details","blockedBy":[1],"owner":"agent"}
 - update_task {"id":1,"status":"pending|blocked|in_progress|completed|failed","owner":"agent or empty"}
 - send_message {"to":"agent","content":"message"}
+- ask_user {"question":"concise question","impact":"which behavior/files this affects","path":"docs/requirements.md"}
+- record_requirement {"question":"question or decision","impact":"which behavior/files this affects","answer":"confirmed business rule","path":"docs/requirements.md"}
 - finish {"summary":"what you completed","status":"completed|failed"}
 
 Rules:
@@ -185,4 +263,6 @@ Rules:
 - Use load_skill before applying a skill that is listed as available but not already loaded.
 - Make small, verifiable steps.
 - Do not rewrite unrelated files.
+- During planning, call ask_user before creating tasks when unresolved business logic would change behavior.
+- Continue implementation only after user clarifications are recorded in the requirements document.
 """

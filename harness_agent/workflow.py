@@ -32,7 +32,10 @@ class Workflow:
 
     def run(self, goal: str) -> dict:
         self._bootstrap_team()
-        self._bootstrap_tasks(goal)
+        if self._requirements_has_content():
+            self._bootstrap_tasks(goal)
+            objective = self._objective(goal, mode="build", use_existing_requirements=True)
+            return self._run_order(objective, mode="build", order=DEFAULT_ORDER[1:])
         objective = self._objective(goal, mode="build")
         return self._run_order(objective, mode="build")
 
@@ -69,7 +72,15 @@ class Workflow:
             )
             self.state.save(state)
 
-            isolated_runtime = ToolRuntime(isolated_root, self.tasks, self.bus, self.skills, journal_path)
+            question_handler = self._make_user_question_handler(state, name)
+            isolated_runtime = ToolRuntime(
+                isolated_root,
+                self.tasks,
+                self.bus,
+                self.skills,
+                journal_path,
+                user_question_handler=question_handler,
+            )
             agent = Agent(config, isolated_root, self.tasks, self.bus, self.skills, isolated_runtime, self.global_prompt)
             try:
                 agent_objective = objective.replace(str(self.root), str(isolated_root))
@@ -147,13 +158,42 @@ class Workflow:
     def _bootstrap_tasks(self, goal: str) -> None:
         if self.tasks.list():
             return
-        setup = self.tasks.create("Plan architecture", goal, owner="")
+        requirements_note = "Use docs/requirements.md as the confirmed business requirements."
+        setup = self.tasks.create("Plan architecture from requirements", f"{goal}\n\n{requirements_note}", owner="")
         code = self.tasks.create("Implement project code", goal, blocked_by=[setup.id], owner="")
         test = self.tasks.create("Write and run tests", goal, blocked_by=[code.id], owner="")
         review = self.tasks.create("Review and fix issues", goal, blocked_by=[test.id], owner="")
         self.tasks.create("Prepare release notes", goal, blocked_by=[review.id], owner="")
 
-    def _objective(self, text: str, mode: str, task_id: int | None = None) -> str:
+    def _requirements_has_content(self) -> bool:
+        path = self.root / "docs" / "requirements.md"
+        return path.exists() and bool(path.read_text(encoding="utf-8").strip())
+
+    def _objective(
+        self,
+        text: str,
+        mode: str,
+        task_id: int | None = None,
+        use_existing_requirements: bool = False,
+    ) -> str:
+        planning_gate = ""
+        if mode == "build" and use_existing_requirements:
+            planning_gate = """
+Requirements gate:
+- docs/requirements.md already contains confirmed business requirements, so the lead planning stage was skipped.
+- Read docs/requirements.md before making architecture or implementation decisions.
+- Treat docs/requirements.md and the task graph as the source of truth.
+- Do not ask planning-stage clarification questions unless the existing requirements contradict the user request or make implementation impossible.
+"""
+        elif mode == "build":
+            planning_gate = """
+Planning gate:
+- The lead agent owns the initial plan and task graph.
+- Before creating implementation tasks, inspect the request and existing files for business logic ambiguity.
+- If any unresolved business question could change code behavior, call ask_user with a concise question and impact.
+- After ask_user returns, read or rely on docs/requirements.md, then create the task graph from the confirmed requirements.
+- Downstream agents must treat docs/requirements.md and the task graph as the source of truth.
+"""
         return f"""
 Mode: {mode}
 Target project root: {self.root}
@@ -162,13 +202,16 @@ Task id: {task_id or "initial"}
 User goal/request:
 {text}
 
+{planning_gate}
+
 Work as a multi-agent software team. Build incrementally:
 1. Inspect current files.
-2. Follow the task graph.
-3. Generate or modify only needed files.
-4. Run suitable verification commands.
-5. Leave concise artifacts under .harness when useful.
-6. Finish when your role's work is done.
+2. Resolve planning-stage business ambiguity before implementation.
+3. Follow the task graph.
+4. Generate or modify only needed files.
+5. Run suitable verification commands.
+6. Leave concise artifacts under .harness when useful.
+7. Finish when your role's work is done.
 """.strip()
 
     def _write_summary(self, results: dict) -> None:
@@ -181,3 +224,37 @@ Work as a multi-agent software team. Build incrementally:
             json.dumps(payload, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
+
+    def _make_user_question_handler(self, state: dict, agent_name: str):
+        def ask(payload: dict[str, str]) -> str:
+            pending = {
+                "agent": agent_name,
+                "question": payload["question"],
+                "impact": payload.get("impact", ""),
+                "requirementsPath": payload.get("path", "docs/requirements.md"),
+            }
+            state.update(
+                {
+                    "status": "blocked_waiting_user",
+                    "phase": "waiting_for_user",
+                    "pendingQuestion": pending,
+                }
+            )
+            self.state.save(state)
+            print("\n[question] Business clarification required")
+            print(f"Agent: {agent_name}")
+            print(f"Question: {pending['question']}")
+            if pending["impact"]:
+                print(f"Impact: {pending['impact']}")
+            answer = input("Answer: ")
+            state.update(
+                {
+                    "status": "in_progress",
+                    "phase": "user_answered",
+                    "pendingQuestion": "",
+                }
+            )
+            self.state.save(state)
+            return answer
+
+        return ask

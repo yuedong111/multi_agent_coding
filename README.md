@@ -52,6 +52,7 @@ python -m harness_agent refine --root C:\path\to\project --request "优化登录
 - `.tasks/`：任务图，JSON 持久化。
 - `.team/`：队友配置、消息 inbox、事件日志。
 - `.harness/`：运行摘要、计划、验证报告、上线说明。
+- `docs/requirements.md`：规划阶段向用户澄清后的业务规则和需求结论。
 
 ## Agent 分工
 
@@ -88,10 +89,20 @@ LLM 通过 JSON action 调用工具，runtime 执行：
 - `create_task`
 - `update_task`
 - `send_message`
+- `ask_user`
+- `record_requirement`
 - `load_skill`
 - `finish`
 
 工具只在 `--root` 指定目录下操作，避免 agent 随意改到别处。
+
+## 规划阶段澄清
+
+build 模式不再预先写死任务图，而是让 `lead` 先做规划。`lead` 在创建实现任务前，如果发现会影响代码行为的业务规则、边界条件、权限、状态流转或异常语义不明确，可以调用 `ask_user`。
+
+runtime 会暂停当前 agent，直接在命令行向用户提问。用户回答后，答案会自动追加到 `docs/requirements.md`，再作为工具结果返回给 agent。随后 `lead` 基于已确认的需求文档创建任务图，后续 architect、coder、tester、reviewer 和 release 都以该文档和任务图为准。
+
+如果目标项目中的 `docs/requirements.md` 已存在且内容非空，build 模式会把它视为已确认需求，跳过 `lead` 规划澄清阶段以节省 token。runtime 会创建一组基础任务图，并直接从 `architect` 开始执行。若该文件不存在或为空文件，则正常进入 `lead` 规划阶段。
 
 ## 设计取舍
 
