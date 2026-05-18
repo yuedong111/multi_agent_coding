@@ -208,7 +208,13 @@ class Workflow:
             )
             agent = Agent(config, isolated_root, self.tasks, self.bus, self.skills, isolated_runtime, self.global_prompt)
             try:
-                agent_objective = self._objective_with_agent_prompt(objective, name, agent_prompt)
+                execution_context = self._execution_context(results)
+                agent_objective = self._objective_with_agent_prompt(
+                    objective,
+                    name,
+                    agent_prompt,
+                    execution_context,
+                )
                 agent_objective = agent_objective.replace(str(self.root), str(isolated_root))
                 result = agent.run(agent_objective)
                 if name == "tester" and isolated_runtime.command_failures:
@@ -656,17 +662,100 @@ Implement only this slice unless a tiny integration change is required:
             return ""
         return path.read_text(encoding="utf-8")
 
-    def _objective_with_agent_prompt(self, objective: str, agent_name: str, agent_prompt: str) -> str:
+    def _execution_context(self, results: dict) -> str:
+        tree = self._project_tree_snapshot()
+        completed = {
+            name: {
+                "status": result.get("status"),
+                "summary": result.get("summary", ""),
+                "changedFiles": result.get("changedFiles", []),
+                "agentPrompt": result.get("agentPrompt", ""),
+            }
+            for name, result in results.items()
+            if result.get("status") == "completed"
+        }
+        if self.lang == "zh":
+            return f"""## 当前项目上下文
+
+### 当前目录结构
+
+```text
+{tree}
+```
+
+### 已完成阶段
+
+```json
+{json.dumps(completed, ensure_ascii=False, indent=2)}
+```
+
+### 对接要求
+
+- 后续实现必须基于当前文件系统继续，不要假设自己是第一阶段。
+- 写代码前先用 `list_files` 查看目录，并用 `read_file` 读取要修改或依赖的现有文件。
+- 优先复用已存在的模块、命名、接口、测试风格和配置。
+- 如果需要改动前序阶段生成的文件，只做与当前切片集成必需的最小修改。
+"""
+        return f"""## Current Project Context
+
+### Current Directory Tree
+
+```text
+{tree}
+```
+
+### Completed Stages
+
+```json
+{json.dumps(completed, ensure_ascii=False, indent=2)}
+```
+
+### Integration Rules
+
+- Continue from the current filesystem; do not assume this is the first implementation stage.
+- Before writing code, call `list_files` and `read_file` for existing files you will modify or depend on.
+- Reuse existing modules, naming, interfaces, tests, and configuration style.
+- If a previous-stage file must change, make only the smallest integration change needed for the current slice.
+"""
+
+    def _project_tree_snapshot(self, limit: int = 200) -> str:
+        lines: list[str] = []
+        for item in sorted(self.root.rglob("*")):
+            if self._is_hidden_state_path(item):
+                continue
+            rel = item.relative_to(self.root).as_posix()
+            suffix = "/" if item.is_dir() else ""
+            lines.append(f"{rel}{suffix}")
+            if len(lines) >= limit:
+                lines.append("... truncated")
+                break
+        return "\n".join(lines) or "(empty)"
+
+    def _is_hidden_state_path(self, path: Path) -> bool:
+        parts = set(path.relative_to(self.root).parts)
+        return bool(parts & {".git", ".tasks", ".team", ".harness", "__pycache__", ".venv"})
+
+    def _objective_with_agent_prompt(
+        self,
+        objective: str,
+        agent_name: str,
+        agent_prompt: str,
+        execution_context: str = "",
+    ) -> str:
         if self.lang == "zh":
             return f"""{objective}
 
 `{agent_name}` 的动态执行 prompt：
 {agent_prompt}
+
+{execution_context}
 """.strip()
         return f"""{objective}
 
 Dynamic execution prompt for `{agent_name}`:
 {agent_prompt}
+
+{execution_context}
 """.strip()
 
     def _objective(

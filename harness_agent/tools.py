@@ -51,6 +51,15 @@ class ToolRuntime:
                 return self._ok(self.write_file(args["path"], args["content"]))
             if name == "append_file":
                 return self._ok(self.append_file(args["path"], args["content"]))
+            if name == "replace_text":
+                return self._ok(
+                    self.replace_text(
+                        args["path"],
+                        args["old"],
+                        args["new"],
+                        int(args.get("count", 1)),
+                    )
+                )
             if name == "run_command":
                 return self._ok(self.run_command(args["command"]))
             if name == "create_task":
@@ -142,6 +151,27 @@ class ToolRuntime:
         after = self._read_optional(target)
         self._journal_file_change("append_file", target, before, after)
         return f"appended {target.relative_to(self.root)}"
+
+    def replace_text(self, path: str, old: str, new: str, count: int = 1) -> str:
+        if count < 1:
+            raise ValueError("count must be at least 1")
+        target = self._safe(path)
+        before = target.read_text(encoding="utf-8")
+        occurrences = before.count(old)
+        if not old:
+            raise ValueError("old text cannot be empty")
+        if occurrences < count:
+            raise ValueError(
+                f"old text occurs {occurrences} time(s), fewer than requested count {count}"
+            )
+        if count == 1 and occurrences != 1:
+            raise ValueError(
+                f"old text occurs {occurrences} time(s); provide a more specific anchor or explicit count"
+            )
+        after = before.replace(old, new, count)
+        target.write_text(after, encoding="utf-8")
+        self._journal_file_change("replace_text", target, before, after)
+        return f"replaced text in {target.relative_to(self.root)}"
 
     def run_command(self, command: str) -> str:
         # Commands run from the project root and return bounded output so the
@@ -321,6 +351,7 @@ Available tools:
 - read_file {"path":"relative/path"}
 - write_file {"path":"relative/path","content":"full file content"}
 - append_file {"path":"relative/path","content":"text"}
+- replace_text {"path":"relative/path","old":"exact existing text","new":"replacement text","count":1}
 - run_command {"command":"shell command to run inside project root"}
 - create_task {"subject":"title","description":"details","blockedBy":[1],"owner":"agent"}
 - update_task {"id":1,"status":"pending|blocked|in_progress|completed|failed","owner":"agent or empty"}
@@ -335,6 +366,7 @@ Rules:
 - Use load_skill before applying a skill that is listed as available but not already loaded.
 - Make small, verifiable steps.
 - Do not rewrite unrelated files.
+- Prefer replace_text for small insertions into existing files after reading the file and choosing a unique anchor.
 - During planning, call ask_user before creating tasks when unresolved business logic would change behavior.
 - Continue implementation only after user clarifications are recorded in the requirements document.
 """

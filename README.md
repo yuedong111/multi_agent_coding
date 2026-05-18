@@ -181,6 +181,22 @@ python -m harness_agent execute --root C:\path\to\project --config agents.local.
 - 如果文件已经存在且内容非空，runtime 会保留该文件，不会覆盖人工或上游流程已生成的内容。
 - 同一份 prompt 会追加进该 agent 的执行 objective，因此它既是运行依据，也是人工审核材料。
 
+分阶段 coder 的代码对接由两层保证：
+
+- 文件系统承接：每个 agent 先在隔离副本中执行；只有该阶段成功完成时，runtime 才把改动 merge 回目标项目根目录。所以下一个 coder 阶段启动时，项目文件系统已经包含上一阶段成功生成的代码。
+- 上下文承接：每个 agent 启动时，runtime 会在 objective 里附加当前目录结构、已完成阶段摘要、前序阶段 `changedFiles` 和对接要求。后续 coder 会被要求先用 `list_files` 查看目录，并用 `read_file` 读取将要修改或依赖的现有文件，再继续实现当前业务切片。
+
+不建议把前面所有代码全文一次性塞进 prompt。更稳的方式是提供目录树和变更清单，让 agent 通过工具按需读取相关文件：这样既能保持上下文小，又能避免读到过期代码。对于跨切片必须共享的契约，例如公共接口、数据模型、路由约定或配置入口，应优先让 architect 在前置阶段生成清晰边界，并让每个 coder 阶段读取这些文件后再修改。
+
+如果后续阶段需要在已生成脚本中插入代码，推荐流程是：
+
+1. 用 `read_file` 读取目标文件。
+2. 找到唯一、稳定的上下文锚点，例如某个函数、配置块或导出列表。
+3. 用 `replace_text` 把这段锚点替换为“原锚点 + 新代码”，完成插入。
+4. 运行相关测试或命令验证衔接。
+
+`replace_text` 会要求 `old` 文本默认只出现一次；如果锚点重复，会返回错误，提示 agent 选择更具体的上下文，避免把代码插错位置。对于需要重构整个文件的情况，才使用 `write_file` 写回完整文件；对于单纯在文件末尾增加内容，才使用 `append_file`。
+
 这种设计把业务规则和执行职责分开：`docs/requirements.md` 记录已确认业务规则，任务图记录工作拆分，`.harness/agent-prompts/*.md` 记录每个 agent 本轮应该如何按这些材料执行。
 
 每个 agent 的 `skills` 是默认加载的技能。运行时还会扫描 `--skills-dir` 下所有 `SKILL.md`，把名称和描述提供给 agent。agent 如果发现某个未默认加载的技能适合当前任务，可以先调用 `load_skill` 工具按需加载，再继续执行。
@@ -193,6 +209,7 @@ LLM 通过 JSON action 调用工具，runtime 执行：
 - `read_file`
 - `write_file`
 - `append_file`
+- `replace_text`
 - `run_command`
 - `create_task`
 - `update_task`

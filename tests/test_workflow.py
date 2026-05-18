@@ -190,6 +190,32 @@ class WorkflowRequirementsGateTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Run the prompts stage first"):
                 workflow.execute("Build a TODO API.")
 
+    def test_execution_context_includes_tree_and_completed_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills = base / "skills"
+            (root / "src").mkdir(parents=True)
+            skills.mkdir()
+            (root / "src" / "app.py").write_text("print('hello')\n", encoding="utf-8")
+            workflow = Workflow(root, config(), skills, "")
+
+            context = workflow._execution_context(
+                {
+                    "coder_1": {
+                        "status": "completed",
+                        "summary": "implemented accounts",
+                        "changedFiles": ["src/app.py"],
+                        "agentPrompt": ".harness/agent-prompts/coder_1.md",
+                    }
+                }
+            )
+
+            self.assertIn("src/", context)
+            self.assertIn("src/app.py", context)
+            self.assertIn("coder_1", context)
+            self.assertIn("read_file", context)
+
 
 if __name__ == "__main__":
     unittest.main()

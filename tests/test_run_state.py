@@ -95,6 +95,49 @@ class ToolRuntimeJournalTest(unittest.TestCase):
             self.assertEqual((root / "app.py").read_text(encoding="utf-8"), "print('hello')")
             self.assertIn("```python", (root / "README.md").read_text(encoding="utf-8"))
 
+    def test_replace_text_updates_unique_anchor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills_dir = root / "skills"
+            skills_dir.mkdir()
+            (root / "app.py").write_text(
+                "def main():\n    setup()\n    run()\n",
+                encoding="utf-8",
+            )
+            runtime = ToolRuntime(
+                root,
+                TaskManager(root),
+                MessageBus(root),
+                SkillLoader(skills_dir),
+            )
+
+            runtime.replace_text(
+                "app.py",
+                "    setup()\n",
+                "    setup()\n    configure_plugins()\n",
+            )
+
+            self.assertEqual(
+                (root / "app.py").read_text(encoding="utf-8"),
+                "def main():\n    setup()\n    configure_plugins()\n    run()\n",
+            )
+
+    def test_replace_text_rejects_ambiguous_anchor(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills_dir = root / "skills"
+            skills_dir.mkdir()
+            (root / "app.py").write_text("x = 1\nx = 1\n", encoding="utf-8")
+            runtime = ToolRuntime(
+                root,
+                TaskManager(root),
+                MessageBus(root),
+                SkillLoader(skills_dir),
+            )
+
+            with self.assertRaisesRegex(ValueError, "more specific anchor"):
+                runtime.replace_text("app.py", "x = 1\n", "x = 2\n")
+
     def test_ask_user_records_answer_in_requirements_doc(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
