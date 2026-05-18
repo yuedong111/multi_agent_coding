@@ -82,6 +82,39 @@ description: Review generated code.
             self.assertIn("- review: Review generated code.", prompt)
             self.assertIn("load_skill", prompt)
 
+    def test_agent_extracts_json_action_from_explanatory_response(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "project"
+            skills_dir = base / "skills"
+            root.mkdir()
+            skills_dir.mkdir()
+            config = AgentConfig(
+                name="coder",
+                role="Write code.",
+                model="test-model",
+                base_url="https://example.test/v1",
+                api_key_env="TEST_API_KEY",
+                temperature=0.0,
+                max_steps=1,
+                skills=[],
+            )
+            agent = Agent(
+                config,
+                root,
+                TaskManager(root),
+                MessageBus(root),
+                SkillLoader(skills_dir),
+                ToolRuntime(root, TaskManager(root), MessageBus(root), SkillLoader(skills_dir)),
+            )
+
+            action = agent._parse_action(
+                'I will write the file now.\n```json\n{"tool":"finish","args":{"summary":"done"}}\n```'
+            )
+
+            self.assertEqual(action["tool"], "finish")
+            self.assertEqual(action["args"]["summary"], "done")
+
 
 if __name__ == "__main__":
     unittest.main()

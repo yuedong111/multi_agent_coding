@@ -43,7 +43,7 @@ class WorkflowRequirementsGateTest(unittest.TestCase):
 
             self.assertEqual(state["order"][0], "architect")
             self.assertNotIn("lead", state["order"])
-            self.assertIn("lead planning stage was skipped", objective)
+            self.assertIn("跳过 lead 规划阶段", objective)
 
     def test_empty_requirements_keeps_lead_planning_gate(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -58,7 +58,7 @@ class WorkflowRequirementsGateTest(unittest.TestCase):
             self.assertFalse(workflow._requirements_has_content())
             objective = workflow._objective("Build the app", mode="build")
 
-            self.assertIn("The lead agent owns the initial plan", objective)
+            self.assertIn("lead agent 负责初始计划", objective)
 
     def test_agent_prompt_is_generated_when_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -171,11 +171,11 @@ class WorkflowRequirementsGateTest(unittest.TestCase):
             self.assertTrue((root / ".harness" / "agent-prompts" / "coder_2.md").exists())
             self.assertEqual(order.count("coder"), workflow._reviewed_coder_prompt_count())
             coder_prompt = (root / ".harness" / "agent-prompts" / "coder_1.md").read_text(encoding="utf-8")
-            self.assertIn("Assigned Business Slice", coder_prompt)
-            self.assertIn("coder.md` is an audit overview only", coder_prompt)
+            self.assertIn("分配的业务切片", coder_prompt)
+            self.assertIn("`coder.md` 仅用于总览审核", coder_prompt)
             self.assertIn("Create account business rule.", coder_prompt)
             self.assertNotIn("Invoice business rule.", coder_prompt)
-            self.assertIn("intentionally embeds only the assigned business slice", coder_prompt)
+            self.assertIn("刻意只内嵌下方分配到的业务切片", coder_prompt)
 
     def test_execute_requires_reviewed_prompts(self):
         with tempfile.TemporaryDirectory() as tmp:

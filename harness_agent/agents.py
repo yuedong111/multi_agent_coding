@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from .config import AgentConfig
@@ -96,11 +97,7 @@ Default loaded skills:
         )
 
     def _parse_action(self, raw: str) -> dict[str, Any]:
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.strip("`")
-            if text.startswith("json"):
-                text = text[4:].strip()
+        text = self._extract_json_candidate(raw)
         try:
             action = json.loads(text)
         except json.JSONDecodeError:
@@ -108,6 +105,19 @@ Default loaded skills:
         if "tool" not in action:
             return {"tool": "finish", "args": {"summary": raw}, "thought": "missing tool"}
         return action
+
+    def _extract_json_candidate(self, raw: str) -> str:
+        text = raw.strip()
+        fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+        if fenced:
+            return fenced.group(1).strip()
+        if text.startswith("{") and text.endswith("}"):
+            return text
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            return text[start : end + 1].strip()
+        return text
 
     def _remember_loaded_skill(self, action: dict[str, Any], result: dict[str, Any]) -> None:
         if action.get("tool") != "load_skill" or not result.get("ok"):

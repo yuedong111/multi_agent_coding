@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 import subprocess
 from typing import Any, Callable
 from time import time
@@ -122,6 +123,7 @@ class ToolRuntime:
     def write_file(self, path: str, content: str) -> str:
         target = self._safe(path)
         before = self._read_optional(target)
+        content = self._normalize_generated_content(target, content)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         self._journal_file_change("write_file", target, before, content)
@@ -223,6 +225,66 @@ class ToolRuntime:
         if not target.exists():
             return None
         return target.read_text(encoding="utf-8")
+
+    def _normalize_generated_content(self, target: Path, content: str) -> str:
+        if not self._is_code_like_path(target):
+            return content
+        blocks = list(
+            re.finditer(
+                r"```[A-Za-z0-9_.+-]*[ \t]*\r?\n(.*?)\r?\n```",
+                content,
+                re.DOTALL,
+            )
+        )
+        if len(blocks) != 1:
+            return content
+        before = content[: blocks[0].start()].strip()
+        after = content[blocks[0].end() :].strip()
+        if before or after:
+            return blocks[0].group(1)
+        return blocks[0].group(1)
+
+    def _is_code_like_path(self, target: Path) -> bool:
+        source_suffixes = {
+            ".c",
+            ".cc",
+            ".cpp",
+            ".cs",
+            ".css",
+            ".dart",
+            ".go",
+            ".h",
+            ".hpp",
+            ".html",
+            ".ini",
+            ".java",
+            ".js",
+            ".json",
+            ".jsx",
+            ".kt",
+            ".kts",
+            ".php",
+            ".ps1",
+            ".py",
+            ".r",
+            ".rb",
+            ".rs",
+            ".scala",
+            ".scss",
+            ".sh",
+            ".sql",
+            ".svelte",
+            ".swift",
+            ".toml",
+            ".ts",
+            ".tsx",
+            ".vue",
+            ".xml",
+            ".yaml",
+            ".yml",
+        }
+        source_names = {"Dockerfile", "Makefile", "Containerfile"}
+        return target.suffix.lower() in source_suffixes or target.name in source_names
 
     def _journal_file_change(self, operation: str, target: Path, before: str | None, after: str | None) -> None:
         if not self.journal_path:

@@ -71,6 +71,30 @@ class ToolRuntimeJournalTest(unittest.TestCase):
             self.assertEqual(entries[1]["before"], "one\n")
             self.assertEqual(entries[1]["after"], "one\ntwo\n")
 
+    def test_write_file_strips_single_code_fence_for_source_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            skills_dir = root / "skills"
+            skills_dir.mkdir()
+            runtime = ToolRuntime(
+                root,
+                TaskManager(root),
+                MessageBus(root),
+                SkillLoader(skills_dir),
+            )
+
+            runtime.write_file(
+                "app.py",
+                "Here is the implementation:\n```python\nprint('hello')\n```\nDone.",
+            )
+            runtime.write_file(
+                "README.md",
+                "Example:\n```python\nprint('hello')\n```\n",
+            )
+
+            self.assertEqual((root / "app.py").read_text(encoding="utf-8"), "print('hello')")
+            self.assertIn("```python", (root / "README.md").read_text(encoding="utf-8"))
+
     def test_ask_user_records_answer_in_requirements_doc(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
