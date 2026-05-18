@@ -23,6 +23,8 @@ class OpenAICompatibleClient:
                 f"Missing API key env {self.config.api_key_env} for agent {self.config.name}"
             )
 
+        # The client only assumes the OpenAI-compatible chat completions shape;
+        # provider-specific behavior is kept in the external config.
         payload = {
             "model": self.config.model,
             "messages": messages,

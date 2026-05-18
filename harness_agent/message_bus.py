@@ -31,6 +31,8 @@ class MessageBus:
         if not path.exists():
             return []
         lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        # Reading drains the inbox so each message is consumed once by the
+        # target agent loop.
         path.write_text("", encoding="utf-8")
         messages = [json.loads(line) for line in lines]
         if messages:

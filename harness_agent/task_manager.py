@@ -52,6 +52,8 @@ class TaskManager:
         )
         self._save(task)
         for blocker in task.blockedBy or []:
+            # Keep reverse dependency links in sync for review and future
+            # scheduling decisions; readiness still comes from blockedBy.
             parent = self.load(blocker)
             if parent and task.id not in (parent.blocks or []):
                 parent.blocks.append(task.id)
@@ -96,6 +98,8 @@ class TaskManager:
     def _clear_dependency(self, completed_id: int) -> None:
         for task in self.list():
             if completed_id in (task.blockedBy or []):
+                # Completing a task unblocks direct dependents once all of their
+                # blockers have cleared.
                 task.blockedBy.remove(completed_id)
                 if not task.blockedBy and task.status == "blocked":
                     task.status = "pending"

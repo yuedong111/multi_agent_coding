@@ -39,6 +39,8 @@ class SkillLoader:
         if not self.skills_dir.exists():
             return found
         for path in sorted(self.skills_dir.rglob("SKILL.md")):
+            # Skills are discovered lazily from local markdown files so adding a
+            # workflow guide does not require changing Python code.
             text = path.read_text(encoding="utf-8")
             meta, body = self._parse_frontmatter(text)
             name = meta.get("name") or path.parent.name

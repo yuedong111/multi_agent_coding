@@ -17,6 +17,8 @@ def add_build_args(command: argparse.ArgumentParser) -> None:
 
 
 def read_goal(root: Path) -> str:
+    # Build-style commands intentionally read the user goal from disk so long
+    # product requests can be reviewed and versioned outside the CLI argv.
     target = root / "goal.md"
     if not target.exists():
         raise FileNotFoundError(f"Goal file not found: {target}")
@@ -52,6 +54,8 @@ def main(argv: list[str] | None = None) -> None:
     refine.add_argument("--lang", choices=["zh", "en"], default="zh", help="Generated prompt language")
 
     args = parser.parse_args(argv)
+    # Config, skills, and AGENTS.md are resolved from the harness working
+    # directory; --root points at the target project the agents will modify.
     base = Path.cwd()
     config = load_config((base / args.config).resolve() if not Path(args.config).is_absolute() else Path(args.config))
     skills_dir = (base / args.skills_dir).resolve() if not Path(args.skills_dir).is_absolute() else Path(args.skills_dir)

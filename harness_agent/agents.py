@@ -35,6 +35,8 @@ class Agent:
         self.runtime_loaded_skills = set(config.skills)
 
     def run(self, objective: str) -> dict[str, Any]:
+        # The agent loop is deliberately tool-gated: every model response is
+        # parsed into one JSON action, dispatched, then fed back as tool_result.
         messages = [
             {"role": "system", "content": self._system_prompt()},
             {"role": "user", "content": objective},
@@ -97,6 +99,8 @@ Default loaded skills:
         )
 
     def _parse_action(self, raw: str) -> dict[str, Any]:
+        # Non-JSON model output is treated as a final summary instead of being
+        # executed, which keeps accidental prose from triggering side effects.
         text = self._extract_json_candidate(raw)
         try:
             action = json.loads(text)

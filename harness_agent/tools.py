@@ -36,6 +36,8 @@ class ToolRuntime:
         self.command_failures: list[dict[str, Any]] = []
 
     def dispatch(self, agent: str, action: dict[str, Any]) -> dict[str, Any]:
+        # The dispatcher is the only side-effect boundary exposed to agents.
+        # Keeping the allow-list explicit makes review of agent capabilities simple.
         name = action.get("tool")
         args = action.get("args", {})
         try:
@@ -123,6 +125,8 @@ class ToolRuntime:
     def write_file(self, path: str, content: str) -> str:
         target = self._safe(path)
         before = self._read_optional(target)
+        # Models often wrap source code in one fenced block; strip that wrapper
+        # only for code-like targets so Markdown documents remain untouched.
         content = self._normalize_generated_content(target, content)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
@@ -140,6 +144,8 @@ class ToolRuntime:
         return f"appended {target.relative_to(self.root)}"
 
     def run_command(self, command: str) -> str:
+        # Commands run from the project root and return bounded output so the
+        # agent can react to failures without flooding the next prompt.
         completed = subprocess.run(
             command,
             cwd=self.root,
@@ -158,6 +164,8 @@ class ToolRuntime:
         return json.dumps(output, ensure_ascii=False, indent=2)
 
     def ask_user(self, agent: str, question: str, impact: str = "", path: str | None = None) -> dict[str, str]:
+        # Business clarifications are immediately persisted through
+        # record_requirement so later agents share the same source of truth.
         if not self.user_question_handler:
             raise RuntimeError("User input is required, but no user question handler is configured")
         payload = {
@@ -210,6 +218,7 @@ class ToolRuntime:
 
     def _safe(self, path: str) -> Path:
         target = (self.root / path).resolve()
+        # All tool paths must stay within the target project root.
         if target != self.root and self.root not in target.parents:
             raise ValueError(f"Path escapes project root: {path}")
         return target
@@ -289,6 +298,7 @@ class ToolRuntime:
     def _journal_file_change(self, operation: str, target: Path, before: str | None, after: str | None) -> None:
         if not self.journal_path:
             return
+        # Journals are append-only audit entries for file-writing tools.
         self.journal_path.parent.mkdir(parents=True, exist_ok=True)
         entry = {
             "timestamp": time(),

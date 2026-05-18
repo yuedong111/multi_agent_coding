@@ -50,6 +50,8 @@ class Workflow:
 
     def plan(self, goal: str) -> dict:
         self._bootstrap_team()
+        # A non-empty requirements file means the business rules have already
+        # passed the human review gate, so plan preserves it verbatim.
         if self._requirements_has_content():
             return {
                 "plan": {
@@ -88,6 +90,8 @@ class Workflow:
             }
         coder_config = self.config.agents.get(CODER_AGENT)
         if coder_config and coder_config.enabled:
+            # coder.md is only an audit overview. Actual build execution uses
+            # coder_1.md, coder_2.md, ... so large requirements stay reviewable.
             audit_path = self._agent_prompt_path(CODER_AGENT)
             existed_with_content = audit_path.exists() and bool(audit_path.read_text(encoding="utf-8").strip())
             self._ensure_agent_prompt(
@@ -131,6 +135,8 @@ class Workflow:
 
     def execute(self, goal: str) -> dict:
         self._bootstrap_team()
+        # Execute is intentionally strict: reviewed requirements and reviewed
+        # prompts must exist before any agent can mutate project files.
         if not self._requirements_has_content():
             raise RuntimeError("docs/requirements.md is empty or missing. Run the plan stage first.")
         self._bootstrap_tasks(goal)
@@ -176,6 +182,8 @@ class Workflow:
                 else self._read_required_agent_prompt(prompt_name)
             )
             checkpoint = self.state.make_checkpoint(state["runId"], name, index)
+            # Each agent works in an isolated copy. Successful output is merged;
+            # failed output is discarded by restoring the checkpoint.
             isolated_root = self.state.prepare_isolation(state["runId"], name, index)
             journal_path = self.state.journal_path(state["runId"], name, index)
             state.update(
@@ -259,6 +267,8 @@ class Workflow:
         order: list[str] = []
         for name in BUILD_EXECUTION_BASE_ORDER:
             if name == "tester":
+                # Every reviewed coder slice gets its own coder/tester pair so
+                # implementation and verification advance in small increments.
                 coder_count = self._reviewed_coder_prompt_count()
                 order.extend([CODER_AGENT, "tester"] * max(coder_count, 1))
                 continue
@@ -273,6 +283,8 @@ class Workflow:
             return self.state.begin(mode, objective, order)
         checkpoint_id = state.get("checkpointId")
         if checkpoint_id:
+            # Resume from the last pre-agent checkpoint to avoid continuing
+            # from a partially mutated worktree after interruption.
             self.state.restore_checkpoint(checkpoint_id)
             state["phase"] = "resumed_after_rollback"
             self.state.save(state)
@@ -597,6 +609,8 @@ Implement only this slice unless a tiny integration change is required:
         current_size = 0
         for section in sections:
             section_size = len(section)
+            # Split only on markdown section boundaries where possible, keeping
+            # each coder prompt focused without cutting business text mid-topic.
             if current and current_size + section_size > CODER_SLICE_TARGET_CHARS:
                 slices.append("\n\n".join(current))
                 current = []
@@ -754,6 +768,8 @@ Work as a multi-agent software team. Build incrementally:
 
     def _make_user_question_handler(self, state: dict, agent_name: str):
         def ask(payload: dict[str, str]) -> str:
+            # Runtime records the blocked state before prompting so an external
+            # operator can see exactly which business decision paused execution.
             pending = {
                 "agent": agent_name,
                 "question": payload["question"],

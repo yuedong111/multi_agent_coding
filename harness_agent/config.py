@@ -30,6 +30,8 @@ def load_config(path: Path) -> HarnessConfig:
     agents: dict[str, AgentConfig] = {}
 
     for name, value in raw.get("agents", {}).items():
+        # Agent-level settings override defaults so teams can share provider
+        # config while still choosing stronger or cheaper models per role.
         merged = {**defaults, **value}
         agents[name] = AgentConfig(
             name=name,

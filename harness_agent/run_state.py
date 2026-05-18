@@ -86,6 +86,8 @@ class RunState:
 
     def merge_isolation(self, isolated_root: Path) -> list[str]:
         changed: list[str] = []
+        # Merge mirrors the isolated workspace back into the real project while
+        # respecting state-directory exclusions from _managed_files().
         self._delete_removed_files(self.root, isolated_root, changed)
         for source in self._managed_files(isolated_root):
             rel = source.relative_to(isolated_root)
@@ -149,4 +151,6 @@ class RunState:
         ]
 
     def _is_state_path(self, rel: Path) -> bool:
+        # Runtime state is excluded from snapshots and merges to avoid corrupting
+        # git metadata, task records, prompts, and virtual environments.
         return bool(set(rel.parts) & STATE_DIRS)
