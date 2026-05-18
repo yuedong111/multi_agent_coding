@@ -22,7 +22,14 @@ CODER_SLICE_TARGET_CHARS = 2400
 
 
 class Workflow:
-    def __init__(self, root: Path, config: HarnessConfig, skills_dir: Path, global_prompt: str = ""):
+    def __init__(
+        self,
+        root: Path,
+        config: HarnessConfig,
+        skills_dir: Path,
+        global_prompt: str = "",
+        lang: str = "zh",
+    ):
         self.root = root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self.harness_dir = self.root / ".harness"
@@ -34,6 +41,7 @@ class Workflow:
         self.state = RunState(self.root)
         self.config = config
         self.global_prompt = global_prompt
+        self.lang = "en" if lang == "en" else "zh"
 
     def run(self, goal: str) -> dict:
         self.plan(goal)
@@ -283,12 +291,21 @@ class Workflow:
     def _bootstrap_tasks(self, goal: str) -> None:
         if self.tasks.list():
             return
-        requirements_note = "Use docs/requirements.md as the confirmed business requirements."
-        setup = self.tasks.create("Plan architecture from requirements", f"{goal}\n\n{requirements_note}", owner="")
-        code = self.tasks.create("Implement project code", goal, blocked_by=[setup.id], owner="")
-        test = self.tasks.create("Write and run tests", goal, blocked_by=[code.id], owner="")
-        review = self.tasks.create("Review and fix issues", goal, blocked_by=[test.id], owner="")
-        self.tasks.create("Prepare release notes", goal, blocked_by=[review.id], owner="")
+        if self.lang == "en":
+            requirements_note = "Use docs/requirements.md as the confirmed business requirements."
+            setup = self.tasks.create("Plan architecture from requirements", f"{goal}\n\n{requirements_note}", owner="")
+            code = self.tasks.create("Implement project code", goal, blocked_by=[setup.id], owner="")
+            test = self.tasks.create("Write and run tests", goal, blocked_by=[code.id], owner="")
+            review = self.tasks.create("Review and fix issues", goal, blocked_by=[test.id], owner="")
+            self.tasks.create("Prepare release notes", goal, blocked_by=[review.id], owner="")
+            return
+
+        requirements_note = "以 docs/requirements.md 作为已确认的业务需求来源。"
+        setup = self.tasks.create("根据需求规划架构", f"{goal}\n\n{requirements_note}", owner="")
+        code = self.tasks.create("实现项目代码", goal, blocked_by=[setup.id], owner="")
+        test = self.tasks.create("编写并运行测试", goal, blocked_by=[code.id], owner="")
+        review = self.tasks.create("审查并修复问题", goal, blocked_by=[test.id], owner="")
+        self.tasks.create("准备发布说明", goal, blocked_by=[review.id], owner="")
 
     def _requirements_has_content(self) -> bool:
         path = self.root / "docs" / "requirements.md"
@@ -299,7 +316,8 @@ class Workflow:
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists() and path.read_text(encoding="utf-8").strip():
             return
-        content = f"""# Business Requirements
+        if self.lang == "en":
+            content = f"""# Business Requirements
 
 ## Goal
 
@@ -315,6 +333,24 @@ class Workflow:
 ## Confirmed Requirements
 
 - TODO: Review the user goal above and replace this line with confirmed requirements before implementation.
+"""
+        else:
+            content = f"""# 业务需求
+
+## 目标
+
+{goal}
+
+## 审核说明
+
+- 本文件是 build 流程的规划和业务需求来源。
+- 请在运行 prompt 生成阶段前人工审核并编辑本文档。
+- 请在这里补充已确认的业务规则、边界条件、权限、状态流转、数据一致性规则和异常语义。
+- 如果业务规则没有记录在这里，后续 agent 不得自行编造。
+
+## 已确认需求
+
+- TODO: 请审核上方用户目标，并在实现前将本行替换为已确认需求。
 """
         path.write_text(content, encoding="utf-8")
 
@@ -415,7 +451,8 @@ class Workflow:
             else requirements.strip() or "(docs/requirements.md is missing or empty.)"
         )
         tasks_text = json.dumps(task_payload, ensure_ascii=False, indent=2) if task_payload else "[]"
-        return f"""# Agent Prompt: {agent_name}
+        if self.lang == "en":
+            return f"""# Agent Prompt: {agent_name}
 
 ## Purpose
 
@@ -454,7 +491,64 @@ This prompt is generated for audit and execution. Runtime creates it only when t
 {objective}
 """
 
+        return f"""# Agent Prompt：{agent_name}
+
+## 用途
+
+本 prompt 用于人工审核和执行。runtime 只会在该文件不存在或为空时创建它；已有非空 prompt 文件会被保留。
+
+## Agent 角色
+
+{role or "（无）"}
+
+## 事实来源
+
+- 在做行为决策前，先读取并遵循 `docs/requirements.md`。
+- 将已确认需求和任务图作为事实来源。
+- 不要编造业务规则。如果缺失的业务语义会改变行为，请在规划阶段使用 `ask_user`，或在结果中报告风险。
+
+## 已确认需求快照
+
+{requirements_text}
+
+## 当前任务图快照
+
+```json
+{tasks_text}
+```
+
+## 执行范围
+
+- 模式：{mode}
+- 只在目标项目根目录内工作。
+- 保持改动最小，并与当前角色职责一致。
+- 除非任务依赖需要小范围协同改动，否则不要修改角色职责之外的文件。
+{stage_note}
+
+## 工作流目标
+
+{objective}
+"""
+
     def _coder_stage_note(self, occurrence: int, total: int, business_slice: str) -> str:
+        if self.lang == "zh":
+            if occurrence == 1:
+                focus = "实现已确认业务需求的第一个独立切片；除非集成需要，不要处理后续切片。"
+            else:
+                focus = "基于前序 coder 输出继续实现下一个独立切片，重点处理尚未完成的业务行为以及评审/测试反馈。"
+            return f"""- Coder 阶段：{occurrence}
+- Coder 阶段总数：{total}
+- 本文件是 coder 第 {occurrence} 轮的执行 prompt；请加载本文件，而不是 `coder.md`。
+- `coder.md` 仅用于总览审核，不得作为执行来源。
+- {focus}
+- 完成前请保持本切片内聚且可验证。
+
+## 分配的业务切片
+
+除非需要极小范围的集成改动，否则只实现以下切片：
+
+{business_slice.strip()}"""
+
         if occurrence == 1:
             focus = "Implement the first independent slice of the confirmed business requirements and leave later slices untouched unless needed for integration."
         else:
@@ -473,11 +567,20 @@ Implement only this slice unless a tiny integration change is required:
 {business_slice.strip()}"""
 
     def _coder_audit_note(self) -> str:
+        if self.lang == "zh":
+            return """- 本 `coder.md` 文件仅用于人工审核 coder 的整体职责。
+- build 执行阶段会加载 `coder_1.md`、`coder_2.md`、... 作为权威代码生成 prompt。
+- 不要依赖这个审核总览作为实现细节来源。"""
         return """- This `coder.md` file is for human audit of the overall coder responsibility only.
 - Build execution loads `coder_1.md`, `coder_2.md`, ... as the authoritative code-generation prompts.
 - Do not rely on this audit overview as the source for implementation details."""
 
     def _coder_execution_requirements_note(self) -> str:
+        if self.lang == "zh":
+            return (
+                "完整需求位于 `docs/requirements.md`，需要时应读取该文件。"
+                "本执行 prompt 会刻意只内嵌下方分配到的业务切片，以保持 coder 上下文聚焦。"
+            )
         return (
             "Full requirements are available in `docs/requirements.md` and should be read when needed. "
             "This execution prompt intentionally embeds only the assigned business slice below to keep "
@@ -540,6 +643,12 @@ Implement only this slice unless a tiny integration change is required:
         return path.read_text(encoding="utf-8")
 
     def _objective_with_agent_prompt(self, objective: str, agent_name: str, agent_prompt: str) -> str:
+        if self.lang == "zh":
+            return f"""{objective}
+
+`{agent_name}` 的动态执行 prompt：
+{agent_prompt}
+""".strip()
         return f"""{objective}
 
 Dynamic execution prompt for `{agent_name}`:
@@ -555,15 +664,26 @@ Dynamic execution prompt for `{agent_name}`:
     ) -> str:
         planning_gate = ""
         if mode == "build" and use_existing_requirements:
-            planning_gate = """
+            planning_gate = (
+                """
 Requirements gate:
 - docs/requirements.md already contains confirmed business requirements, so the lead planning stage was skipped.
 - Read docs/requirements.md before making architecture or implementation decisions.
 - Treat docs/requirements.md and the task graph as the source of truth.
 - Do not ask planning-stage clarification questions unless the existing requirements contradict the user request or make implementation impossible.
 """
+                if self.lang == "en"
+                else """
+需求门禁：
+- docs/requirements.md 已包含已确认的业务需求，因此跳过 lead 规划阶段。
+- 在做架构或实现决策前读取 docs/requirements.md。
+- 将 docs/requirements.md 和任务图作为事实来源。
+- 除非现有需求与用户请求矛盾，或导致实现无法继续，否则不要提出规划阶段澄清问题。
+"""
+            )
         elif mode == "build":
-            planning_gate = """
+            planning_gate = (
+                """
 Planning gate:
 - The lead agent owns the initial plan and task graph.
 - Before creating implementation tasks, inspect the request and existing files for business logic ambiguity.
@@ -571,7 +691,18 @@ Planning gate:
 - After ask_user returns, read or rely on docs/requirements.md, then create the task graph from the confirmed requirements.
 - Downstream agents must treat docs/requirements.md and the task graph as the source of truth.
 """
-        return f"""
+                if self.lang == "en"
+                else """
+规划门禁：
+- lead agent 负责初始计划和任务图。
+- 创建实现任务前，检查请求和现有文件中是否存在业务逻辑歧义。
+- 如果任何未解决的业务问题会改变代码行为，请调用 ask_user，并给出简洁问题和影响范围。
+- ask_user 返回后，读取或依赖 docs/requirements.md，再根据已确认需求创建任务图。
+- 后续 agent 必须将 docs/requirements.md 和任务图作为事实来源。
+"""
+            )
+        if self.lang == "en":
+            return f"""
 Mode: {mode}
 Target project root: {self.root}
 Task id: {task_id or "initial"}
@@ -589,6 +720,25 @@ Work as a multi-agent software team. Build incrementally:
 5. Run suitable verification commands.
 6. Leave concise artifacts under .harness when useful.
 7. Finish when your role's work is done.
+""".strip()
+        return f"""
+模式：{mode}
+目标项目根目录：{self.root}
+任务 id：{task_id or "initial"}
+
+用户目标/请求：
+{text}
+
+{planning_gate}
+
+作为多 agent 软件团队增量构建：
+1. 检查当前文件。
+2. 在实现前解决规划阶段业务歧义。
+3. 遵循任务图。
+4. 只生成或修改必要文件。
+5. 运行合适的验证命令。
+6. 有帮助时在 .harness 下留下简洁产物。
+7. 当前角色工作完成后即结束。
 """.strip()
 
     def _write_summary(self, results: dict) -> None:

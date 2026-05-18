@@ -13,6 +13,7 @@ def add_build_args(command: argparse.ArgumentParser) -> None:
     command.add_argument("--config", default="configs/agents.example.json", help="Agent config JSON")
     command.add_argument("--skills-dir", default="skills", help="Skills directory")
     command.add_argument("--agents-md", default="AGENTS.md", help="Global agent instructions Markdown")
+    command.add_argument("--lang", choices=["zh", "en"], default="zh", help="Generated requirements and prompt language")
 
 
 def read_goal(root: Path) -> str:
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> None:
     refine.add_argument("--config", default="configs/agents.example.json", help="Agent config JSON")
     refine.add_argument("--skills-dir", default="skills", help="Skills directory")
     refine.add_argument("--agents-md", default="AGENTS.md", help="Global agent instructions Markdown")
+    refine.add_argument("--lang", choices=["zh", "en"], default="zh", help="Generated prompt language")
 
     args = parser.parse_args(argv)
     base = Path.cwd()
@@ -56,7 +58,7 @@ def main(argv: list[str] | None = None) -> None:
     agents_md = (base / args.agents_md).resolve() if not Path(args.agents_md).is_absolute() else Path(args.agents_md)
     global_prompt = agents_md.read_text(encoding="utf-8") if agents_md.exists() else ""
     root = Path(args.root)
-    workflow = Workflow(root, config, skills_dir, global_prompt)
+    workflow = Workflow(root, config, skills_dir, global_prompt, lang=args.lang)
 
     if args.command == "run":
         goal = read_goal(root)
